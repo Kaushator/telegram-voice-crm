@@ -10,3 +10,4 @@ data/
 uploads/
 logs/
 *.bak*
+server.ts.bak-*

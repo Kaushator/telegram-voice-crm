@@ -1,0 +1,13 @@
+.git
+node_modules
+build
+dist
+coverage
+.env
+.env.*
+!.env.example
+data
+uploads
+logs
+*.log
+server.ts.bak-*
