@@ -238,3 +238,18 @@ export interface MacContainerState {
   lastHeartbeat: string;
   gpuAccelerated: boolean;
 }
+
+export interface OpenRouterConfig {
+  apiKey: string;
+  model1Editor: string;
+  model2Validator: string;
+  isEnabled: boolean;
+  systemContext: {
+    familyStructure: string;
+    currentLocation: string;
+    primaryTaskDomains: string[];
+    instructions: string[];
+  };
+  updatedAt?: string;
+}
+

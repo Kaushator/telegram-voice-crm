@@ -12,7 +12,8 @@ import {
   Transcription,
   ProcessedText,
   Translation,
-  BrandingConfig
+  BrandingConfig,
+  OpenRouterConfig
 } from './types.js';
 
 const dataDir = path.join(process.cwd(), 'data');
@@ -36,9 +37,35 @@ export interface DatabaseState {
   auditLogs: DbAuditLog[];
   activationCodes: { code: string; assistantId: string; used: boolean; createdAt: string }[];
   brandingConfig?: BrandingConfig;
+  openrouterConfig?: OpenRouterConfig;
 }
 
+const defaultOpenRouterConfig: OpenRouterConfig = {
+  apiKey: '',
+  model1Editor: 'openai/gpt-5.6-sol',
+  model2Validator: 'openai/o3-mini',
+  isEnabled: true,
+  systemContext: {
+    familyStructure: 'Шеф с женой, 3 детьми и нянями',
+    currentLocation: 'Заграничная поездка / Турне по Европе',
+    primaryTaskDomains: [
+      'VIP-логистика и трансферы по Европе',
+      'Аренда премиальных авто (Range Rover, Mercedes S-Class/V-Class)',
+      'Аренда частных яхт, катеров и вертолетов',
+      'Бронирование 5-звездочных отелей, вилл и резортов',
+      'Координация распорядка семьи, детей и нянь'
+    ],
+    instructions: [
+      'Сохранять 100% точность чисел, дат, географических названий, марок автомобилей и финансовых сумм',
+      'Категорический запрет на домысливание или галлюцинирование несуществующих деталей',
+      'В случае неоднозначности текста — обязательно явно выделить её примечанием [Примечание к записи: ...], не выдумывая подробностей'
+    ]
+  },
+  updatedAt: new Date().toISOString()
+};
+
 const defaultDbState: DatabaseState = {
+
   users: [
     { id: 'usr-1001', telegram_id: '1001', role: 'chief', created_at: new Date(Date.now() - 86400000).toISOString(), first_name: 'Шеф' },
     { id: 'usr-1002', telegram_id: '1002', role: 'assistant', created_at: new Date(Date.now() - 86400000).toISOString(), first_name: 'Анна' },
@@ -153,7 +180,11 @@ export function loadDb(): DatabaseState {
       if (!memoryDb.transcriptions) memoryDb.transcriptions = [];
       if (!memoryDb.processedTexts) memoryDb.processedTexts = [];
       if (!memoryDb.translations) memoryDb.translations = [];
+      if (!memoryDb.openrouterConfig) {
+        memoryDb.openrouterConfig = defaultOpenRouterConfig;
+      }
       if (!memoryDb.brandingConfig) {
+
         memoryDb.brandingConfig = {
           logo_url: '',
           company_name: 'Voice CRM',

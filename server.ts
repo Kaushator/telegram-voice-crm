@@ -21,14 +21,13 @@ import {
   WorkerDevice,
   Transcription,
   ProcessedText,
-  Translation
+  Translation,
+  OpenRouterConfig
 } from './src/types.js';
+
 
 const app = express();
 const PORT = 3000;
-const BASE_URL = process.env.BASE_URL || process.env.APP_URL || 'http://localhost:3000';
-const WHISPER_WORKER_URL = process.env.WHISPER_WORKER_URL || 'http://localhost:8000';
-const SECONDARY_WHISPER_WORKER_URL = process.env.SECONDARY_WHISPER_WORKER_URL || 'http://localhost:8001';
 
 app.use(express.json());
 
@@ -98,7 +97,182 @@ function verifySignedAudioUrl(filePath: string, expires: string, sig: string): b
   return crypto.timingSafeEqual(Buffer.from(expectedSig), Buffer.from(sig));
 }
 
+// OpenRouter API & Dual Model Pipeline
+async function callOpenRouterModel(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userMessage: string
+): Promise<string> {
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://gardens-crm.ai',
+      'X-Title': 'Voice CRM Boss Assistant'
+    },
+    body: JSON.stringify({
+      model: model || 'openai/gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage }
+      ],
+      response_format: { type: 'json_object' }
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`OpenRouter HTTP ${response.status}: ${errText}`);
+  }
+
+  const data: any = await response.json();
+  const content = data.choices?.[0]?.message?.content || '{}';
+  return content;
+}
+
+async function runDualModelOpenRouterPipeline(
+  rawText: string,
+  config: OpenRouterConfig
+) {
+  const { apiKey, model1Editor, model2Validator, systemContext } = config;
+
+  const formattedContextJson = JSON.stringify(
+    {
+      VIP_BOSS_CONTEXT: {
+        familyStructure: systemContext?.familyStructure || 'Шеф с женой, 3 детьми и нянями',
+        currentLocation: systemContext?.currentLocation || 'Заграничная поездка / Турне по Европе',
+        primaryDomains: systemContext?.primaryTaskDomains || [
+          'VIP-логистика и трансферы по Европе',
+          'Аренда премиальных авто (Range Rover, Mercedes S-Class/V-Class)',
+          'Аренда частных яхт, катеров и вертолетов',
+          'Бронирование 5-звездочных отелей, вилл и резортов',
+          'Координация распорядка семьи, детей и нянь'
+        ],
+        strictInstructions: systemContext?.instructions || [
+          'Сохранять 100% точность чисел, дат, географических названий, марок автомобилей и финансовых сумм',
+          'Категорический запрет на домысливание или галлюцинирование несуществующих деталей',
+          'В случае неоднозначности текста — обязательно явно выделить её примечанием [Примечание к записи: ...], не выдумывая подробностей'
+        ]
+      }
+    },
+    null,
+    2
+  );
+
+  // STAGE 1: Model 1 (Editor & Translator)
+  const systemPromptModel1 = `Ты — Модель 1: Эксперт-редактор деловой речи и переводчик CRM-системы.
+Контекст поездки и семьи Шефа:
+${formattedContextJson}
+
+ЗАДАЧИ МОДЕЛИ 1:
+1. Очистить сырой текст голосовой транскрибации от междометий, заиканий, паразитных слов (эээ, ну, типа, как бы).
+2. Выполнить литературную правку, расставить пунктуацию и логические абзацы.
+3. Сохранить ВСЕ имена, даты, цены, валюты, марки машин (Range Rover, Mercedes), названия отелей/резортов, географические локации в Европе и отрицания.
+4. Выполнить перевод почищенного текста на английский (EN) и тайский (TH) языки.
+
+ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА (JSON):
+{
+  "cleanText": "Очищенный и структурированный русский текст",
+  "translationEn": "English translation",
+  "translationTh": "แปลภาษาไทย",
+  "changesSummary": "Описание сделанных правок и структуры"
+}`;
+
+  const model1RawResponse = await callOpenRouterModel(
+    apiKey,
+    model1Editor || 'openai/gpt-5.6-sol',
+    systemPromptModel1,
+    `Сырой текст транскрибации: "${rawText}"`
+  );
+
+  let model1Parsed: any = {};
+  try {
+    const match = model1RawResponse.match(/\{[\s\S]*\}/);
+    model1Parsed = JSON.parse(match ? match[0] : model1RawResponse);
+  } catch (e) {
+    model1Parsed = {
+      cleanText: rawText,
+      translationEn: rawText,
+      translationTh: rawText,
+      changesSummary: 'Ошибка парсинга ответа Модели 1'
+    };
+  }
+
+  // STAGE 2: Model 2 (Validator & Auditor)
+  const systemPromptModel2 = `Ты — Модель 2: Инспектор валидации и аудита точности (Anti-Hallucination & Verification Auditor).
+Контекст поездки и семьи Шефа:
+${formattedContextJson}
+
+ТВОЯ ЕДИНСТВЕННАЯ И ГЛАВНАЯ ЦЕЛЬ:
+Сравнить исходную сырую транскрипцию с обработанным результатом Модели 1 и проверить его на 100% фактическую точность.
+
+КРИТИЧЕСКИЕ ПРАВИЛА ВАЛИДАЦИИ:
+1. Проверить, что Модель 1 НЕ ДОБАВИЛА никаких выдуманных деталей, фактов, цифр или фантазий от себя.
+2. В СЛУЧАЕ НЕОДНОЗНАЧНОСТИ или нечеткости в исходном голосе — Модель 2 должна ПРОСТО ОБРАТИТЬ НА ЭТО ВНИМАНИЕ ПРЯМО В ТЕКСТЕ, добавив вежливое краткое примечание, например:
+   "[Примечание аудитора: В исходной записи время/условие высказано неоднозначно - требуется уточнение у Шефа]".
+3. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО самостоятельно домысливать или выдумывать недостающие детали!
+4. Проверить и скорректировать русские, английские и тайские версии текста, убрав любые возможные галлюцинации.
+
+ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА (JSON):
+{
+  "validatedCleanText": "Проверенный русский текст (при необходимости с примечанием о недопонимании)",
+  "validatedTranslationEn": "Validated English translation",
+  "validatedTranslationTh": "Validated Thai translation",
+  "hasDiscrepancyOrAmbiguity": false,
+  "auditSummary": "Отчет проверки: факты сопоставлены, галлюцинации отсутствуют"
+}`;
+
+  const userMessageStage2 = `Исходная сырая запись (WhisperX):
+"${rawText}"
+
+Результат Модели 1 (Редактор):
+${JSON.stringify(model1Parsed, null, 2)}`;
+
+  const model2RawResponse = await callOpenRouterModel(
+    apiKey,
+    model2Validator || 'openai/o3-mini',
+    systemPromptModel2,
+    userMessageStage2
+  );
+
+  let model2Parsed: any = {};
+  try {
+    const match = model2RawResponse.match(/\{[\s\S]*\}/);
+    model2Parsed = JSON.parse(match ? match[0] : model2RawResponse);
+  } catch (e) {
+    model2Parsed = {
+      validatedCleanText: model1Parsed.cleanText || rawText,
+      validatedTranslationEn: model1Parsed.translationEn || rawText,
+      validatedTranslationTh: model1Parsed.translationTh || rawText,
+      hasDiscrepancyOrAmbiguity: false,
+      auditSummary: 'Ошибка парсинга ответа Модели 2 (использован результат Модели 1)'
+    };
+  }
+
+  return {
+    rawText,
+    model1: {
+      modelName: model1Editor || 'openai/gpt-5.6-sol',
+      cleanText: model1Parsed.cleanText || rawText,
+      translationEn: model1Parsed.translationEn || '',
+      translationTh: model1Parsed.translationTh || '',
+      changesSummary: model1Parsed.changesSummary || ''
+    },
+    model2: {
+      modelName: model2Validator || 'openai/o3-mini',
+      validatedCleanText: model2Parsed.validatedCleanText || model1Parsed.cleanText || rawText,
+      validatedTranslationEn: model2Parsed.validatedTranslationEn || model1Parsed.translationEn || '',
+      validatedTranslationTh: model2Parsed.validatedTranslationTh || model1Parsed.translationTh || '',
+      hasDiscrepancyOrAmbiguity: !!model2Parsed.hasDiscrepancyOrAmbiguity,
+      auditSummary: model2Parsed.auditSummary || 'Проверка выполнена'
+    }
+  };
+}
+
 // AI Pipeline Helpers (Gemini / AI Cleanup & Translation)
+
 async function runAiCleanupPipeline(rawText: string): Promise<{ cleanText: string; changesSummary: string; hallucinationChecked: boolean }> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (apiKey) {
@@ -241,8 +415,8 @@ let slots: {
   assistant1: { name: string; telegram_id: string; worker_url: string; active: boolean } | null;
   assistant2: { name: string; telegram_id: string; worker_url: string; active: boolean } | null;
 } = {
-  assistant1: { name: 'Ассистент 1 (Анна)', telegram_id: '1002', worker_url: WHISPER_WORKER_URL, active: true },
-  assistant2: { name: 'Ассистент 2 (Игорь)', telegram_id: '1003', worker_url: SECONDARY_WHISPER_WORKER_URL, active: true },
+  assistant1: { name: 'Ассистент 1 (Анна)', telegram_id: '1002', worker_url: 'http://localhost:8000', active: true },
+  assistant2: { name: 'Ассистент 2 (Игорь)', telegram_id: '1003', worker_url: 'http://localhost:8001', active: true },
 };
 
 let simulationConfig = {
@@ -258,12 +432,12 @@ let assistantSettings = {
   assistant1: {
     name: 'Ассистент 1 (Анна)',
     chatId: '@anna_asst',
-    workerUrl: WHISPER_WORKER_URL,
+    workerUrl: 'http://localhost:8000',
   },
   assistant2: {
     name: 'Ассистент 2 (Игорь)',
     chatId: '@igor_asst',
-    workerUrl: SECONDARY_WHISPER_WORKER_URL,
+    workerUrl: 'http://localhost:8001',
   }
 };
 
@@ -352,7 +526,74 @@ function transitionTaskStatus(
   return historyItem;
 }
 
+// ==========================================
+// OpenRouter AI Engine Admin API Endpoints
+// ==========================================
+
+app.get('/api/admin/openrouter-config', (req, res) => {
+  const db = getDb();
+  return res.json({
+    success: true,
+    config: db.openrouterConfig
+  });
+});
+
+app.post('/api/admin/openrouter-config', (req, res) => {
+  const { config } = req.body;
+  if (!config) {
+    return res.status(400).json({ error: 'MISSING_CONFIG', message: 'Поле config обязательно' });
+  }
+
+  const db = getDb();
+  db.openrouterConfig = {
+    ...db.openrouterConfig,
+    ...config,
+    updatedAt: new Date().toISOString()
+  };
+  saveDb();
+
+  writeServerLog('INFO', 'admin', 'Обновлена конфигурация OpenRouter (Модель 1 & Модель 2)', {
+    model1: config.model1Editor,
+    model2: config.model2Validator,
+    isEnabled: config.isEnabled
+  }, 'OPENROUTER_CONFIG_UPDATE');
+
+  return res.json({
+    success: true,
+    config: db.openrouterConfig
+  });
+});
+
+app.post('/api/admin/openrouter-test', async (req, res) => {
+  const { rawText, configOverride } = req.body;
+  if (!rawText) {
+    return res.status(400).json({ error: 'MISSING_TEXT', message: 'Текст для тестирования обязателен' });
+  }
+
+  const db = getDb();
+  const cfg = configOverride || db.openrouterConfig;
+
+  if (!cfg || !cfg.apiKey) {
+    return res.status(400).json({ error: 'MISSING_API_KEY', message: 'OpenRouter API Key не указан' });
+  }
+
+  try {
+    const result = await runDualModelOpenRouterPipeline(rawText, cfg);
+    return res.json({
+      success: true,
+      result
+    });
+  } catch (err: any) {
+    console.error('OpenRouter Test Sandbox Error:', err);
+    return res.status(500).json({
+      error: 'OPENROUTER_TEST_FAILED',
+      message: err.message || 'Ошибка выполнения тестирования OpenRouter'
+    });
+  }
+});
+
 app.get('/api/health', (req, res) => {
+
   res.json({ status: 'ok', serverTime: new Date().toISOString() });
 });
 
@@ -512,8 +753,89 @@ app.post('/api/worker/result', async (req, res) => {
   transitionTaskStatus(task, 'processing', 'vps_ai_pipeline', 'Запущен AI Pipeline на VPS (Cleanup & Translation)');
   saveDb();
 
-  // 2. Run AI Cleanup Pipeline
+  // 2. Check if OpenRouter Dual-Model Pipeline is configured
+  const openrouterConfig = db.openrouterConfig;
+  if (openrouterConfig && openrouterConfig.isEnabled && openrouterConfig.apiKey) {
+    try {
+      writeServerLog('INFO', 'vps_ai_pipeline', `Запуск двухуровневого OpenRouter AI Pipeline (${openrouterConfig.model1Editor} -> ${openrouterConfig.model2Validator}) для задачи #${taskId}`);
+      const dualResult = await runDualModelOpenRouterPipeline(newTranscription.raw_text, openrouterConfig);
+
+      const newProcessedText: ProcessedText = {
+        id: 'proc-' + Date.now(),
+        task_id: taskId,
+        transcription_id: newTranscription.id,
+        clean_text: dualResult.model2.validatedCleanText,
+        changes_summary: `${dualResult.model1.changesSummary} | Audit: ${dualResult.model2.auditSummary}`,
+        hallucination_checked: true,
+        created_at: new Date().toISOString()
+      };
+      db.processedTexts.push(newProcessedText);
+      task.processed_text = newProcessedText;
+
+      const newTranslationEn: Translation = {
+        id: 'trans-en-' + Date.now(),
+        task_id: taskId,
+        processed_text_id: newProcessedText.id,
+        target_language: 'en',
+        translated_text: dualResult.model2.validatedTranslationEn,
+        model: `openrouter:${openrouterConfig.model1Editor}+${openrouterConfig.model2Validator}`,
+        created_at: new Date().toISOString()
+      };
+
+      const newTranslationTh: Translation = {
+        id: 'trans-th-' + Date.now(),
+        task_id: taskId,
+        processed_text_id: newProcessedText.id,
+        target_language: 'th',
+        translated_text: dualResult.model2.validatedTranslationTh,
+        model: `openrouter:${openrouterConfig.model1Editor}+${openrouterConfig.model2Validator}`,
+        created_at: new Date().toISOString()
+      };
+
+      if (!db.translations) db.translations = [];
+      db.translations.push(newTranslationEn, newTranslationTh);
+
+      if (!task.translations) task.translations = [];
+      task.translations.push(newTranslationEn, newTranslationTh);
+
+      // Transition to 'review'
+      transitionTaskStatus(task, 'review', 'vps_openrouter_pipeline', 'OpenRouter (Модель 1 + Модель 2) обработка завершена.');
+      saveDb();
+
+      // UI update
+      const uiTask = tasks.find(t => t.id === taskId);
+      if (uiTask) {
+        uiTask.status = 'review';
+        uiTask.voiceMessage.originalTranscript = newTranscription.raw_text;
+        uiTask.voiceMessage.translationRu = dualResult.model2.validatedCleanText;
+        uiTask.voiceMessage.translationEn = dualResult.model2.validatedTranslationEn;
+        uiTask.voiceMessage.translationTh = dualResult.model2.validatedTranslationTh;
+        uiTask.transcription = newTranscription;
+        uiTask.processedText = newProcessedText;
+        uiTask.translations = [newTranslationEn, newTranslationTh];
+      }
+
+      writeServerLog('INFO', 'vps_ai_pipeline', `Завершен OpenRouter Dual-Model Pipeline для задачи #${taskId}: ${dualResult.model2.auditSummary}`, { taskId }, 'OPENROUTER_PIPELINE_COMPLETE');
+
+      return res.json({
+        success: true,
+        taskId,
+        transcription: newTranscription,
+        processedText: newProcessedText,
+        translation: newTranslationEn,
+        translations: [newTranslationEn, newTranslationTh],
+        status: 'review',
+        openrouterResult: dualResult
+      });
+    } catch (err: any) {
+      console.error('OpenRouter Pipeline Error, falling back to standard pipeline:', err);
+      writeServerLog('WARN', 'vps_ai_pipeline', `Ошибка OpenRouter API: ${err.message}. Переход на запасной pipeline.`);
+    }
+  }
+
+  // 3. Fallback Standard AI Cleanup Pipeline (Gemini or Local Engine)
   const cleanupResult = await runAiCleanupPipeline(newTranscription.raw_text);
+
 
   const newProcessedText: ProcessedText = {
     id: 'proc-' + Date.now(),
@@ -796,29 +1118,6 @@ app.post('/api/bot/voice-intake', upload.single('audio'), (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
-});
-
-app.post('/api/telegram/webhook', (req, res) => {
-  const update = req.body || {};
-  const message = update.message || update.edited_message || update.callback_query?.message;
-  const telegramId = message?.from?.id || update.callback_query?.from?.id;
-  const messageType = update.callback_query
-    ? 'callback_query'
-    : message?.voice
-      ? 'voice'
-      : message?.text
-        ? 'text'
-        : 'unknown';
-
-  writeServerLog(
-    'INFO',
-    'telegram_bot',
-    `Telegram webhook update received (${messageType})`,
-    { updateId: update.update_id, telegramId, messageType },
-    'TELEGRAM_WEBHOOK_RECEIVED'
-  );
-
-  res.json({ ok: true });
 });
 
 app.post('/api/tasks/:id/finish-intake', (req, res) => {
@@ -1291,7 +1590,7 @@ app.post('/api/register-worker', (req, res) => {
   }
 
   if (!slots.assistant1 || !slots.assistant1.telegram_id) {
-    slots.assistant1 = { name: name || 'Ассистент 1', telegram_id, worker_url: worker_url || WHISPER_WORKER_URL, active: true };
+    slots.assistant1 = { name: name || 'Ассистент 1', telegram_id, worker_url: worker_url || 'http://localhost:8000', active: true };
 
     assistantSettings.assistant1.name = slots.assistant1.name;
     assistantSettings.assistant1.chatId = `@${telegram_id}`;
@@ -1307,7 +1606,7 @@ app.post('/api/register-worker', (req, res) => {
   }
 
   if (!slots.assistant2 || !slots.assistant2.telegram_id) {
-    slots.assistant2 = { name: name || 'Ассистент 2', telegram_id, worker_url: worker_url || SECONDARY_WHISPER_WORKER_URL, active: true };
+    slots.assistant2 = { name: name || 'Ассистент 2', telegram_id, worker_url: worker_url || 'http://localhost:8001', active: true };
 
     assistantSettings.assistant2.name = slots.assistant2.name;
     assistantSettings.assistant2.chatId = `@${telegram_id}`;
@@ -1602,8 +1901,6 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Telegram Voice CRM Server listening on http://0.0.0.0:${PORT}`);
-    console.log(`CRM public base URL: ${BASE_URL}`);
-    console.log(`Primary Whisper worker URL: ${WHISPER_WORKER_URL}`);
   });
 }
 

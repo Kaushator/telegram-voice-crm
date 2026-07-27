@@ -6,6 +6,8 @@ import { EdenLogo } from './EdenLogo';
 import { SimulationTestingControl } from './SimulationTestingControl';
 import { MacDeploymentGuide } from './MacDeploymentGuide';
 import { MacWorkerConfigurator } from './MacWorkerConfigurator';
+import { OpenRouterAdminControl } from './OpenRouterAdminControl';
+
 
 interface TelegramSimulatorProps {
   currentRole: UserRole;
@@ -42,7 +44,8 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
   // Assistant & Admin Tabs State
   const [assistantTab, setAssistantTab] = useState<'available' | 'in_progress' | 'completed'>('available');
-  const [adminSubTab, setAdminSubTab] = useState<'simulation' | 'mac_config' | 'workers' | 'analytics' | 'deploy_guide' | 'checklist'>('simulation');
+  const [adminSubTab, setAdminSubTab] = useState<'simulation' | 'openrouter' | 'mac_config' | 'workers' | 'analytics' | 'deploy_guide' | 'checklist'>('simulation');
+
 
   // Audio Player Speeds per Task
   const [playbackSpeeds, setPlaybackSpeeds] = useState<Record<string, number>>({});
@@ -567,11 +570,18 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                 🧪 Тестирование (Chat ID)
               </button>
               <button
+                onClick={() => setAdminSubTab('openrouter')}
+                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'openrouter' ? 'bg-sky-600 text-white font-bold' : 'bg-slate-800 text-slate-300'}`}
+              >
+                🌐 OpenRouter AI
+              </button>
+              <button
                 onClick={() => setAdminSubTab('mac_config')}
                 className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'mac_config' ? 'bg-amber-700 text-white font-bold' : 'bg-slate-800 text-slate-300'}`}
               >
                 🛠️ Конфигуратор Mac Worker
               </button>
+
               <button
                 onClick={() => setAdminSubTab('workers')}
                 className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'workers' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
@@ -601,7 +611,10 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
             {/* Admin SubTab Content */}
             {adminSubTab === 'simulation' && <SimulationTestingControl />}
 
+            {adminSubTab === 'openrouter' && <OpenRouterAdminControl />}
+
             {adminSubTab === 'mac_config' && <MacWorkerConfigurator />}
+
 
             {adminSubTab === 'deploy_guide' && <MacDeploymentGuide />}
 

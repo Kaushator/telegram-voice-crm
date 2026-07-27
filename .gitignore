@@ -6,8 +6,3 @@ coverage/
 *.log
 .env*
 !.env.example
-data/
-uploads/
-logs/
-*.bak*
-server.ts.bak-*
