@@ -7,6 +7,7 @@ import { SimulationTestingControl } from './SimulationTestingControl';
 import { MacDeploymentGuide } from './MacDeploymentGuide';
 import { MacWorkerConfigurator } from './MacWorkerConfigurator';
 import { OpenRouterAdminControl } from './OpenRouterAdminControl';
+import { SystemAiAdminControl } from './SystemAiAdminControl';
 
 
 interface TelegramSimulatorProps {
@@ -44,7 +45,6 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
   // Assistant & Admin Tabs State
   const [assistantTab, setAssistantTab] = useState<'available' | 'in_progress' | 'completed'>('available');
-  const [adminSubTab, setAdminSubTab] = useState<'simulation' | 'openrouter' | 'mac_config' | 'workers' | 'analytics' | 'deploy_guide' | 'checklist'>('simulation');
 
 
   // Audio Player Speeds per Task
@@ -59,6 +59,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   const [simulatingWorker, setSimulatingWorker] = useState<string | null>(null);
 
   // Admin Data State
+  const [adminSubTab, setAdminSubTab] = useState<'system_ai' | 'simulation' | 'checklist'>('system_ai');
   const [adminSlots, setAdminSlots] = useState<any>(null);
   const [adminActivationCode, setAdminActivationCode] = useState<string | null>(null);
 
@@ -564,118 +565,28 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
             <div className="flex items-center gap-1.5 overflow-x-auto text-xs pb-1">
               <button
+                onClick={() => setAdminSubTab('system_ai')}
+                className={`px-3 py-1 rounded-lg font-bold text-xs whitespace-nowrap transition-all ${adminSubTab === 'system_ai' ? 'bg-sky-600 text-white shadow-md' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+              >
+                ⚡ Система & AI (Zero-Config)
+              </button>
+              <button
                 onClick={() => setAdminSubTab('simulation')}
-                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'simulation' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+                className={`px-3 py-1 rounded-lg font-medium text-xs whitespace-nowrap transition-all ${adminSubTab === 'simulation' ? 'bg-amber-600 text-white shadow-md' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
               >
-                🧪 Тестирование (Chat ID)
-              </button>
-              <button
-                onClick={() => setAdminSubTab('openrouter')}
-                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'openrouter' ? 'bg-sky-600 text-white font-bold' : 'bg-slate-800 text-slate-300'}`}
-              >
-                🌐 OpenRouter AI
-              </button>
-              <button
-                onClick={() => setAdminSubTab('mac_config')}
-                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'mac_config' ? 'bg-amber-700 text-white font-bold' : 'bg-slate-800 text-slate-300'}`}
-              >
-                🛠️ Конфигуратор Mac Worker
-              </button>
-
-              <button
-                onClick={() => setAdminSubTab('workers')}
-                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'workers' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
-              >
-                💻 Воркеры Mac
-              </button>
-              <button
-                onClick={() => setAdminSubTab('deploy_guide')}
-                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'deploy_guide' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-300'}`}
-              >
-                📖 Деплой WhisperX
-              </button>
-              <button
-                onClick={() => setAdminSubTab('analytics')}
-                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'analytics' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
-              >
-                📊 Аналитика AI
+                🧪 Отладка Chat ID
               </button>
               <button
                 onClick={() => setAdminSubTab('checklist')}
-                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'checklist' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+                className={`px-3 py-1 rounded-lg font-medium text-xs whitespace-nowrap transition-all ${adminSubTab === 'checklist' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
               >
                 📋 Чек-лист UI
               </button>
             </div>
 
-            {/* Admin SubTab Content */}
+            {/* Unified Admin SubTab Content */}
+            {adminSubTab === 'system_ai' && <SystemAiAdminControl />}
             {adminSubTab === 'simulation' && <SimulationTestingControl />}
-
-            {adminSubTab === 'openrouter' && <OpenRouterAdminControl />}
-
-            {adminSubTab === 'mac_config' && <MacWorkerConfigurator />}
-
-
-            {adminSubTab === 'deploy_guide' && <MacDeploymentGuide />}
-
-            {adminSubTab === 'workers' && (
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center justify-between bg-slate-950 p-2 rounded border border-slate-800">
-                  <span>Сгенерировать одноразовый код активации Mac Worker:</span>
-                  <button
-                    onClick={handleGenerateActivationCode}
-                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium text-[11px]"
-                  >
-                    🔑 Сгенерировать
-                  </button>
-                </div>
-
-                {adminActivationCode && (
-                  <div className="p-2 bg-indigo-950/80 border border-indigo-800 rounded font-mono text-indigo-300 text-[11px]">
-                    Код активации: <span className="text-white font-bold text-sm tracking-wider">{adminActivationCode}</span>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-slate-950 p-2 rounded border border-slate-800 space-y-1">
-                    <div className="font-semibold text-slate-300">Слот 1: Анна</div>
-                    <div className="text-[10px] text-emerald-400 font-mono">Статус: Online / Ready</div>
-                    <button
-                      onClick={() => handleResetSlot(1)}
-                      className="mt-1 px-2 py-0.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded text-[10px]"
-                    >
-                      Сбросить Слот 1
-                    </button>
-                  </div>
-                  <div className="bg-slate-950 p-2 rounded border border-slate-800 space-y-1">
-                    <div className="font-semibold text-slate-300">Слот 2: Игорь</div>
-                    <div className="text-[10px] text-amber-400 font-mono">Статус: Idle / Polling</div>
-                    <button
-                      onClick={() => handleResetSlot(2)}
-                      className="mt-1 px-2 py-0.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded text-[10px]"
-                    >
-                      Сбросить Слот 2
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {adminSubTab === 'analytics' && adminAnalytics && (
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="bg-slate-950 p-2 rounded border border-slate-800">
-                  <div className="text-slate-400 text-[10px]">Всего вызовов AI API</div>
-                  <div className="text-lg font-bold text-sky-400 font-mono">{adminAnalytics.aiApiRequests?.totalApiCalls || 0}</div>
-                  <div className="text-[10px] text-slate-500">WhisperX + Gemini Cleanup + Translation</div>
-                </div>
-                <div className="bg-slate-950 p-2 rounded border border-slate-800">
-                  <div className="text-slate-400 text-[10px]">Точность распознавания</div>
-                  <div className="text-lg font-bold text-emerald-400 font-mono">{adminAnalytics.recognitionStats?.accuracyRate || '98.5%'}</div>
-                  <div className="text-[10px] text-slate-500">Галлюцинации: Checked</div>
-                </div>
-              </div>
-            )}
-
             {adminSubTab === 'checklist' && <TestingChecklist />}
           </div>
         )}

@@ -41,12 +41,12 @@ export interface DatabaseState {
 }
 
 const defaultOpenRouterConfig: OpenRouterConfig = {
-  apiKey: '',
-  model1Editor: 'openai/gpt-5.6-sol',
-  model2Validator: 'openai/o3-mini',
+  apiKey: process.env.OPENROUTER_API_KEY || '',
+  model1Editor: process.env.DEFAULT_STAGE1_MODEL || 'openai/gpt-5.6-sol',
+  model2Validator: process.env.DEFAULT_STAGE2_MODEL || 'openai/o3-mini',
   isEnabled: true,
   systemContext: {
-    familyStructure: 'Шеф с женой, 3 детьми и нянями',
+    familyStructure: process.env.FAMILY_LOGISTICS_CONTEXT || 'Шеф с женой, 3 детьми и нянями',
     currentLocation: 'Заграничная поездка / Турне по Европе',
     primaryTaskDomains: [
       'VIP-логистика и трансферы по Европе',
@@ -182,6 +182,16 @@ export function loadDb(): DatabaseState {
       if (!memoryDb.translations) memoryDb.translations = [];
       if (!memoryDb.openrouterConfig) {
         memoryDb.openrouterConfig = defaultOpenRouterConfig;
+      } else {
+        if (!memoryDb.openrouterConfig.apiKey && process.env.OPENROUTER_API_KEY) {
+          memoryDb.openrouterConfig.apiKey = process.env.OPENROUTER_API_KEY;
+        }
+        if (process.env.DEFAULT_STAGE1_MODEL) {
+          memoryDb.openrouterConfig.model1Editor = process.env.DEFAULT_STAGE1_MODEL;
+        }
+        if (process.env.DEFAULT_STAGE2_MODEL) {
+          memoryDb.openrouterConfig.model2Validator = process.env.DEFAULT_STAGE2_MODEL;
+        }
       }
       if (!memoryDb.brandingConfig) {
 
