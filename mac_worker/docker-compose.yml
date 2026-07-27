@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  mac_worker:
+    build: .
+    container_name: macbook_m3_whisperx_worker
+    ports:
+      - "8000:8000"
+    environment:
+      - MAIN_SERVER_URL=http://your-central-crm-server.com
+      - WORKER_ID=asst-1
+      - WORKER_NAME=Ассистент 1 (MacBook Air M3)
+      - WHISPER_MODEL=large-v3
+      - OLLAMA_MODEL=gemma2:9b
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    restart: always
