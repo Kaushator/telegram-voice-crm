@@ -26,6 +26,9 @@ import {
 
 const app = express();
 const PORT = 3000;
+const BASE_URL = process.env.BASE_URL || process.env.APP_URL || 'http://localhost:3000';
+const WHISPER_WORKER_URL = process.env.WHISPER_WORKER_URL || 'http://localhost:8000';
+const SECONDARY_WHISPER_WORKER_URL = process.env.SECONDARY_WHISPER_WORKER_URL || 'http://localhost:8001';
 
 app.use(express.json());
 
@@ -238,8 +241,8 @@ let slots: {
   assistant1: { name: string; telegram_id: string; worker_url: string; active: boolean } | null;
   assistant2: { name: string; telegram_id: string; worker_url: string; active: boolean } | null;
 } = {
-  assistant1: { name: 'Ассистент 1 (Анна)', telegram_id: '1002', worker_url: 'http://localhost:8000', active: true },
-  assistant2: { name: 'Ассистент 2 (Игорь)', telegram_id: '1003', worker_url: 'http://localhost:8001', active: true },
+  assistant1: { name: 'Ассистент 1 (Анна)', telegram_id: '1002', worker_url: WHISPER_WORKER_URL, active: true },
+  assistant2: { name: 'Ассистент 2 (Игорь)', telegram_id: '1003', worker_url: SECONDARY_WHISPER_WORKER_URL, active: true },
 };
 
 let simulationConfig = {
@@ -255,12 +258,12 @@ let assistantSettings = {
   assistant1: {
     name: 'Ассистент 1 (Анна)',
     chatId: '@anna_asst',
-    workerUrl: 'http://localhost:8000',
+    workerUrl: WHISPER_WORKER_URL,
   },
   assistant2: {
     name: 'Ассистент 2 (Игорь)',
     chatId: '@igor_asst',
-    workerUrl: 'http://localhost:8001',
+    workerUrl: SECONDARY_WHISPER_WORKER_URL,
   }
 };
 
@@ -795,6 +798,29 @@ app.post('/api/bot/voice-intake', upload.single('audio'), (req, res) => {
   }
 });
 
+app.post('/api/telegram/webhook', (req, res) => {
+  const update = req.body || {};
+  const message = update.message || update.edited_message || update.callback_query?.message;
+  const telegramId = message?.from?.id || update.callback_query?.from?.id;
+  const messageType = update.callback_query
+    ? 'callback_query'
+    : message?.voice
+      ? 'voice'
+      : message?.text
+        ? 'text'
+        : 'unknown';
+
+  writeServerLog(
+    'INFO',
+    'telegram_bot',
+    `Telegram webhook update received (${messageType})`,
+    { updateId: update.update_id, telegramId, messageType },
+    'TELEGRAM_WEBHOOK_RECEIVED'
+  );
+
+  res.json({ ok: true });
+});
+
 app.post('/api/tasks/:id/finish-intake', (req, res) => {
   const { id } = req.params;
   const db = getDb();
@@ -1265,7 +1291,7 @@ app.post('/api/register-worker', (req, res) => {
   }
 
   if (!slots.assistant1 || !slots.assistant1.telegram_id) {
-    slots.assistant1 = { name: name || 'Ассистент 1', telegram_id, worker_url: worker_url || 'http://localhost:8000', active: true };
+    slots.assistant1 = { name: name || 'Ассистент 1', telegram_id, worker_url: worker_url || WHISPER_WORKER_URL, active: true };
 
     assistantSettings.assistant1.name = slots.assistant1.name;
     assistantSettings.assistant1.chatId = `@${telegram_id}`;
@@ -1281,7 +1307,7 @@ app.post('/api/register-worker', (req, res) => {
   }
 
   if (!slots.assistant2 || !slots.assistant2.telegram_id) {
-    slots.assistant2 = { name: name || 'Ассистент 2', telegram_id, worker_url: worker_url || 'http://localhost:8001', active: true };
+    slots.assistant2 = { name: name || 'Ассистент 2', telegram_id, worker_url: worker_url || SECONDARY_WHISPER_WORKER_URL, active: true };
 
     assistantSettings.assistant2.name = slots.assistant2.name;
     assistantSettings.assistant2.chatId = `@${telegram_id}`;
@@ -1576,6 +1602,8 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Telegram Voice CRM Server listening on http://0.0.0.0:${PORT}`);
+    console.log(`CRM public base URL: ${BASE_URL}`);
+    console.log(`Primary Whisper worker URL: ${WHISPER_WORKER_URL}`);
   });
 }
 
