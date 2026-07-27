@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { UserRole, Task, TaskMessage, BrandingConfig } from '../types';
+import { UserRole, Task, TaskMessage } from '../types';
 import { initTelegramWebApp, triggerHaptic } from '../utils/telegramSdk';
-import { BrandingOnboardingModal } from './BrandingOnboardingModal';
 import { TestingChecklist } from './TestingChecklist';
+import { EdenLogo } from './EdenLogo';
+import { SimulationTestingControl } from './SimulationTestingControl';
+import { MacDeploymentGuide } from './MacDeploymentGuide';
+import { MacWorkerConfigurator } from './MacWorkerConfigurator';
 
 interface TelegramSimulatorProps {
   currentRole: UserRole;
@@ -30,16 +33,6 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
     initTelegramWebApp();
   }, []);
 
-  // Branding State
-  const [branding, setBranding] = useState<BrandingConfig>({
-    logo_url: '',
-    company_name: 'Voice CRM',
-    primary_color: '#0284c7',
-    background_pattern_enabled: true,
-    updated_at: new Date().toISOString()
-  });
-  const [isBrandingModalOpen, setIsBrandingModalOpen] = useState(false);
-
   // Chief Voice Recording Flow State
   const [voiceTitle, setVoiceTitle] = useState('Инструкция по закупке техники');
   const [durationSec, setDurationSec] = useState(135);
@@ -49,7 +42,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
   // Assistant & Admin Tabs State
   const [assistantTab, setAssistantTab] = useState<'available' | 'in_progress' | 'completed'>('available');
-  const [adminSubTab, setAdminSubTab] = useState<'workers' | 'tasks' | 'analytics' | 'branding' | 'checklist'>('workers');
+  const [adminSubTab, setAdminSubTab] = useState<'simulation' | 'mac_config' | 'workers' | 'analytics' | 'deploy_guide' | 'checklist'>('simulation');
 
   // Audio Player Speeds per Task
   const [playbackSpeeds, setPlaybackSpeeds] = useState<Record<string, number>>({});
@@ -65,27 +58,14 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   // Admin Data State
   const [adminSlots, setAdminSlots] = useState<any>(null);
   const [adminActivationCode, setAdminActivationCode] = useState<string | null>(null);
+
+  // Ksenia Easter Egg State
+  const [showKseniaEasterEgg, setShowKseniaEasterEgg] = useState(false);
+  const [hasSeenKseniaEasterEgg, setHasSeenKseniaEasterEgg] = useState(false);
   const [adminAnalytics, setAdminAnalytics] = useState<any>(null);
 
   const currentAssistantId = currentRole === 'assistant_1' ? 'usr-1002' : currentRole === 'assistant_2' ? 'usr-1003' : 'usr-1001';
   const currentAssistantName = currentRole === 'assistant_1' ? 'Ассистент 1 (Анна)' : currentRole === 'assistant_2' ? 'Ассистент 2 (Игорь)' : 'Шеф';
-
-  // Fetch Branding
-  const fetchBranding = async () => {
-    try {
-      const res = await fetch('/api/branding');
-      const data = await res.json();
-      if (data.branding) {
-        setBranding(data.branding);
-        // Auto-open branding modal for admin if logo is not set
-        if (!data.branding.logo_url && (currentRole === 'admin' || currentRole === 'chief')) {
-          setIsBrandingModalOpen(true);
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching branding', err);
-    }
-  };
 
   // Fetch Admin Data
   const fetchAdminData = async () => {
@@ -105,25 +85,10 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   };
 
   useEffect(() => {
-    fetchBranding();
     if (currentRole === 'admin') {
       fetchAdminData();
     }
   }, [currentRole]);
-
-  const saveBranding = async (newConfig: Partial<BrandingConfig>) => {
-    try {
-      const res = await fetch('/api/admin/branding/logo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newConfig)
-      });
-      const data = await res.json();
-      if (data.branding) setBranding(data.branding);
-    } catch (err) {
-      console.error('Error saving branding', err);
-    }
-  };
 
   const fetchTaskMessages = (taskId: string) => {
     fetch(`/api/tasks/${taskId}/messages?userId=${currentAssistantId}&role=${currentRole}`)
@@ -136,9 +101,18 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
       .catch((err) => console.error('Error fetching messages', err));
   };
 
+  const [easterEggLang, setEasterEggLang] = useState<'ru' | 'en' | 'th'>('ru');
+
   useEffect(() => {
     tasks.forEach((t) => fetchTaskMessages(t.id));
-  }, [tasks]);
+
+    const completedBossTasksCount = tasks.filter((t) => t.status === 'completed').length;
+    if (completedBossTasksCount >= 5 && !hasSeenKseniaEasterEgg) {
+      setShowKseniaEasterEgg(true);
+      setHasSeenKseniaEasterEgg(true);
+      triggerHaptic('notification');
+    }
+  }, [tasks, hasSeenKseniaEasterEgg]);
 
   // Voice recording simulation
   const handleStartVoiceRecord = () => {
@@ -378,25 +352,17 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
       }}
     >
       {/* Background Watermark */}
-      {branding.background_pattern_enabled && branding.logo_url && (
-        <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-5 overflow-hidden z-0">
-          <img src={branding.logo_url} alt="Brand Watermark" className="max-w-md max-h-md object-contain" />
-        </div>
-      )}
+      <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-5 overflow-hidden z-0">
+        <EdenLogo className="scale-150" />
+      </div>
 
       {/* Telegram Header with Branding */}
-      <div className="bg-slate-800/90 backdrop-blur-md px-4 py-3 border-b border-slate-700/80 flex items-center justify-between z-10 relative">
+      <div className="bg-slate-900/90 backdrop-blur-md px-4 py-3 border-b border-amber-900/30 flex items-center justify-between z-10 relative">
         <div className="flex items-center gap-3">
-          {branding.logo_url ? (
-            <img src={branding.logo_url} alt="Logo" className="h-8 max-w-[120px] object-contain" />
-          ) : (
-            <div className="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center font-bold text-white text-xs">
-              {branding.company_name.slice(0, 2).toUpperCase()}
-            </div>
-          )}
-          <div>
-            <h2 className="text-sm font-semibold text-white">{branding.company_name}</h2>
-            <p className="text-[11px] text-sky-400 font-mono">
+          <EdenLogo variant="compact" />
+          <div className="border-l border-amber-500/30 pl-3">
+            <h2 className="text-xs font-semibold text-white tracking-wide">GARDENS OF EDEN RESIDENCES</h2>
+            <p className="text-[10px] text-amber-300 font-mono">
               {currentRole === 'boss' && 'Язык: Русский (Шеф)'}
               {currentRole.startsWith('assistant') && 'ภาษา: ภาษาไทย (ผู้ช่วย)'}
               {currentRole === 'admin' && 'Язык: Русский (Администратор)'}
@@ -405,18 +371,9 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-slate-300 bg-slate-900 px-2.5 py-1 rounded border border-slate-700 font-mono">
+          <span className="text-[11px] text-amber-100/90 bg-amber-950/60 px-2.5 py-1 rounded border border-amber-800/50 font-mono">
             {currentRole === 'admin' ? 'Администратор' : currentAssistantName}
           </span>
-          {(currentRole === 'admin' || currentRole === 'boss') && (
-            <button
-              onClick={() => setIsBrandingModalOpen(true)}
-              title="Настройка бренда"
-              className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-200 transition-colors text-xs"
-            >
-              🎨
-            </button>
-          )}
         </div>
       </div>
 
@@ -604,32 +561,50 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
             <div className="flex items-center gap-1.5 overflow-x-auto text-xs pb-1">
               <button
-                onClick={() => setAdminSubTab('workers')}
-                className={`px-3 py-1 rounded font-medium ${adminSubTab === 'workers' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+                onClick={() => setAdminSubTab('simulation')}
+                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'simulation' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-300'}`}
               >
-                💻 Воркеры
+                🧪 Тестирование (Chat ID)
+              </button>
+              <button
+                onClick={() => setAdminSubTab('mac_config')}
+                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'mac_config' ? 'bg-amber-700 text-white font-bold' : 'bg-slate-800 text-slate-300'}`}
+              >
+                🛠️ Конфигуратор Mac Worker
+              </button>
+              <button
+                onClick={() => setAdminSubTab('workers')}
+                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'workers' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+              >
+                💻 Воркеры Mac
+              </button>
+              <button
+                onClick={() => setAdminSubTab('deploy_guide')}
+                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'deploy_guide' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+              >
+                📖 Деплой WhisperX
               </button>
               <button
                 onClick={() => setAdminSubTab('analytics')}
-                className={`px-3 py-1 rounded font-medium ${adminSubTab === 'analytics' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'analytics' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
               >
                 📊 Аналитика AI
               </button>
               <button
-                onClick={() => setAdminSubTab('branding')}
-                className={`px-3 py-1 rounded font-medium ${adminSubTab === 'branding' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
-              >
-                🎨 Брендинг
-              </button>
-              <button
                 onClick={() => setAdminSubTab('checklist')}
-                className={`px-3 py-1 rounded font-medium ${adminSubTab === 'checklist' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+                className={`px-3 py-1 rounded font-medium whitespace-nowrap ${adminSubTab === 'checklist' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300'}`}
               >
                 📋 Чек-лист UI
               </button>
             </div>
 
             {/* Admin SubTab Content */}
+            {adminSubTab === 'simulation' && <SimulationTestingControl />}
+
+            {adminSubTab === 'mac_config' && <MacWorkerConfigurator />}
+
+            {adminSubTab === 'deploy_guide' && <MacDeploymentGuide />}
+
             {adminSubTab === 'workers' && (
               <div className="space-y-2 text-xs">
                 <div className="flex items-center justify-between bg-slate-950 p-2 rounded border border-slate-800">
@@ -684,20 +659,6 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                   <div className="text-slate-400 text-[10px]">Точность распознавания</div>
                   <div className="text-lg font-bold text-emerald-400 font-mono">{adminAnalytics.recognitionStats?.accuracyRate || '98.5%'}</div>
                   <div className="text-[10px] text-slate-500">Галлюцинации: Checked</div>
-                </div>
-              </div>
-            )}
-
-            {adminSubTab === 'branding' && (
-              <div className="bg-slate-950 p-3 rounded border border-slate-800 space-y-2 text-xs">
-                <div className="flex justify-between items-center">
-                  <span>Текущий стиль: <strong className="text-sky-400">{branding.company_name}</strong></span>
-                  <button
-                    onClick={() => setIsBrandingModalOpen(true)}
-                    className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs"
-                  >
-                    Изменить логотип и цвета
-                  </button>
                 </div>
               </div>
             )}
@@ -1083,13 +1044,75 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
         </div>
       </div>
 
-      {/* Branding Modal */}
-      <BrandingOnboardingModal
-        branding={branding}
-        isOpen={isBrandingModalOpen}
-        onClose={() => setIsBrandingModalOpen(false)}
-        onSaveBranding={saveBranding}
-      />
+      {/* Easter Egg Modal - Ksenia's Vacation Greetings */}
+      {showKseniaEasterEgg && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 max-w-md w-full shadow-2xl text-left space-y-4 relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500"></div>
+
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <span className="text-xs font-bold text-amber-200 tracking-wide uppercase">
+                {easterEggLang === 'ru' && 'Системный статус'}
+                {easterEggLang === 'en' && 'System Status'}
+                {easterEggLang === 'th' && 'สถานะระบบ'}
+              </span>
+              <div className="flex items-center gap-1 text-[10px] font-mono">
+                <button
+                  onClick={() => setEasterEggLang('ru')}
+                  className={`px-2 py-0.5 rounded ${easterEggLang === 'ru' ? 'bg-amber-600 text-white font-bold' : 'bg-slate-800 text-slate-400'}`}
+                >
+                  RU
+                </button>
+                <button
+                  onClick={() => setEasterEggLang('en')}
+                  className={`px-2 py-0.5 rounded ${easterEggLang === 'en' ? 'bg-amber-600 text-white font-bold' : 'bg-slate-800 text-slate-400'}`}
+                >
+                  EN
+                </button>
+                <button
+                  onClick={() => setEasterEggLang('th')}
+                  className={`px-2 py-0.5 rounded ${easterEggLang === 'th' ? 'bg-amber-600 text-white font-bold' : 'bg-slate-800 text-slate-400'}`}
+                >
+                  TH
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-sm font-bold text-white">
+                {easterEggLang === 'ru' && 'Виртуальный ассистент Ксения'}
+                {easterEggLang === 'en' && 'Virtual Assistant Ksenia'}
+                {easterEggLang === 'th' && 'ผู้ช่วยเสมือน Ksenia'}
+              </h3>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                {easterEggLang === 'ru' && 'Виртуальный ассистент Ксения обеспечивает бесперебойный контроль выполнения задач и WhisperX-транскрибацию, пока реальный сотрудник находится в плановом отпуске.'}
+                {easterEggLang === 'en' && 'Virtual Assistant Ksenia provides continuous workflow oversight and WhisperX transcription while the staff member is on scheduled leave.'}
+                {easterEggLang === 'th' && 'ผู้ช่วยเสมือน Ksenia ดูแลการทำงานและการถอดความ WhisperX อย่างต่อเนื่อง ขณะที่เจ้าหน้าที่หลักอยู่ระหว่างการลาพักร้อน'}
+              </p>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-lg text-[11px] text-slate-300 font-mono flex items-center justify-between">
+              <span>
+                {easterEggLang === 'ru' && 'Завершенных поручений Шефа:'}
+                {easterEggLang === 'en' && 'Boss tasks completed:'}
+                {easterEggLang === 'th' && 'งานของหัวหน้าเสร็จสิ้น:'}
+              </span>
+              <span className="font-bold text-amber-400 text-xs">
+                {tasks.filter((t) => t.status === 'completed').length}
+              </span>
+            </div>
+
+            <button
+              onClick={() => setShowKseniaEasterEgg(false)}
+              className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition-colors border border-slate-700"
+            >
+              {easterEggLang === 'ru' && 'Подтвердить'}
+              {easterEggLang === 'en' && 'Confirm'}
+              {easterEggLang === 'th' && 'ตกลง'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -242,6 +242,15 @@ let slots: {
   assistant2: { name: 'Ассистент 2 (Игорь)', telegram_id: '1003', worker_url: 'http://localhost:8001', active: true },
 };
 
+let simulationConfig = {
+  isTestingMode: true,
+  bossChatId: '@boss_test_1001',
+  recipientChatId: '@anna_asst_1002',
+  recipientName: 'Ассистент 1 (Анна)',
+  boundMacWorkerId: '1002',
+  statusMessage: 'Режим тестирования активен (Шеф: @boss_test_1001, Получатель: @anna_asst_1002, Mac: Привязан)'
+};
+
 let assistantSettings = {
   assistant1: {
     name: 'Ассистент 1 (Анна)',
@@ -1321,6 +1330,116 @@ app.post('/api/slots/reset', (req, res) => {
   }
 
   return res.status(400).json({ error: 'INVALID_SLOT', message: 'Неверный номер слота' });
+});
+
+// Simulation & Testing Endpoints
+app.get('/api/simulation/state', (req, res) => {
+  res.json({
+    success: true,
+    simulationConfig,
+    slots,
+    macContainers,
+    assistantSettings
+  });
+});
+
+app.post('/api/simulation/setup', (req, res) => {
+  const { bossChatId, recipientChatId, recipientName } = req.body;
+
+  const finalBossChatId = bossChatId ? (bossChatId.startsWith('@') ? bossChatId : `@${bossChatId}`) : '@boss_test_1001';
+  const finalRecipientChatId = recipientChatId ? (recipientChatId.startsWith('@') ? recipientChatId : `@${recipientChatId}`) : '@anna_asst_1002';
+  const finalRecipientName = recipientName || 'Тестовый Ассистент';
+
+  simulationConfig = {
+    isTestingMode: true,
+    bossChatId: finalBossChatId,
+    recipientChatId: finalRecipientChatId,
+    recipientName: finalRecipientName,
+    boundMacWorkerId: '1002',
+    statusMessage: `Режим тестирования активен: Шеф (${finalBossChatId}) ➔ Получатель (${finalRecipientChatId}) привязан к Mac Worker`
+  };
+
+  // Bind to Slot 1 & Assistant Settings & Mac Worker 1002
+  slots.assistant1 = {
+    name: finalRecipientName,
+    telegram_id: finalRecipientChatId.replace('@', ''),
+    worker_url: 'http://localhost:8000',
+    active: true
+  };
+
+  assistantSettings.assistant1 = {
+    name: finalRecipientName,
+    chatId: finalRecipientChatId,
+    workerUrl: 'http://localhost:8000'
+  };
+
+  macContainers['1002'] = {
+    ...macContainers['1002'],
+    assistantName: finalRecipientName,
+    isOnline: true,
+    whisperxReady: true,
+    lastHeartbeat: new Date().toISOString()
+  };
+
+  const logMsg = `[SIMULATION_SETUP] Настроены тестовые параметры: Шеф=${finalBossChatId}, Получатель=${finalRecipientChatId} (${finalRecipientName}). Автоматически привязан Mac Worker #1002.`;
+  writeServerLog('INFO', 'admin', logMsg, { bossChatId: finalBossChatId, recipientChatId: finalRecipientChatId, recipientName: finalRecipientName }, 'SIMULATION_SETUP');
+
+  res.json({
+    success: true,
+    message: 'Тестовые параметры связи и привязка Mac успешно сохранены',
+    simulationConfig,
+    slots,
+    macContainers
+  });
+});
+
+app.post('/api/simulation/reset', (req, res) => {
+  simulationConfig = {
+    isTestingMode: false,
+    bossChatId: '',
+    recipientChatId: '',
+    recipientName: '',
+    boundMacWorkerId: '',
+    statusMessage: 'Тесты завершены. Система перешла в режим ожидания реальных пользователей и их привязки.'
+  };
+
+  // Immediately reset all slots and mac containers
+  slots.assistant1 = null;
+  slots.assistant2 = null;
+
+  assistantSettings.assistant1 = { name: 'Свободный слот 1 (Ожидание подключения)', chatId: '', workerUrl: '' };
+  assistantSettings.assistant2 = { name: 'Свободный слот 2 (Ожидание подключения)', chatId: '', workerUrl: '' };
+
+  macContainers['1002'] = {
+    assistantId: '1002',
+    assistantName: 'Свободный слот 1 (Ожидание)',
+    isOnline: false,
+    whisperxReady: false,
+    lastHeartbeat: new Date(0).toISOString(),
+    gpuAccelerated: false,
+    endpoint: ''
+  };
+
+  macContainers['1003'] = {
+    assistantId: '1003',
+    assistantName: 'Свободный слот 2 (Ожидание)',
+    isOnline: false,
+    whisperxReady: false,
+    lastHeartbeat: new Date(0).toISOString(),
+    gpuAccelerated: false,
+    endpoint: ''
+  };
+
+  const logMsg = `[SIMULATION_RESET] Окончание тестов: Все тестовые Chat ID и привязки Mac сброшены. Система перешла в режим ожидания реальных пользователей.`;
+  writeServerLog('INFO', 'admin', logMsg, undefined, 'SIMULATION_RESET');
+
+  res.json({
+    success: true,
+    message: 'Все тесты завершены. Chat ID и Mac отвязаны. Система переведена в режим ожидания реальных пользователей.',
+    simulationConfig,
+    slots,
+    macContainers
+  });
 });
 
 app.get('/api/tasks', (req, res) => {

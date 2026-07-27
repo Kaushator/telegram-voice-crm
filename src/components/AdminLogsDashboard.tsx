@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { LogEntry } from '../types';
+import { SimulationTestingControl } from './SimulationTestingControl';
+import { MacDeploymentGuide } from './MacDeploymentGuide';
+import { MacWorkerConfigurator } from './MacWorkerConfigurator';
 
 interface AdminLogsDashboardProps {
   logs: LogEntry[];
@@ -95,6 +98,15 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Simulation & Testing Control Panel */}
+      <SimulationTestingControl />
+
+      {/* Mac Worker Configurator & File Generator */}
+      <MacWorkerConfigurator />
+
+      {/* Deployment Guide for Employee MacBooks */}
+      <MacDeploymentGuide />
+
       {/* Settings & Slot Management Section */}
       <div className="bg-slate-900 rounded-lg border border-slate-800 text-slate-100 p-4 shadow-lg space-y-4">
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">

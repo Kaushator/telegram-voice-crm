@@ -1,5 +1,6 @@
 import React from 'react';
 import { UserRole } from '../types';
+import { EdenLogo } from './EdenLogo';
 
 interface RoleSelectorProps {
   currentRole: UserRole;
@@ -42,31 +43,29 @@ export const RoleSelector: React.FC<RoleSelectorProps> = ({
   ];
 
   return (
-    <div className="bg-slate-900 border-b border-slate-800 text-slate-100">
+    <div className="bg-slate-950/85 backdrop-blur-md border-b border-amber-900/30 text-slate-100 shadow-xl">
       <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded bg-indigo-600 flex items-center justify-center font-bold text-white tracking-wider text-sm">
-              CRM
-            </div>
-            <div>
-              <h1 className="text-base font-semibold text-white tracking-tight">
-                Telegram Voice CRM & WhisperX Processing
+          <div className="flex items-center gap-4">
+            <EdenLogo variant="compact" className="shrink-0" />
+            <div className="border-l border-amber-500/30 pl-3">
+              <h1 className="text-sm font-semibold text-white tracking-wide">
+                GARDENS OF EDEN <span className="text-amber-300 font-normal text-xs">| Voice CRM</span>
               </h1>
-              <p className="text-xs text-slate-400">
-                Автоматический перевод и транскрибация для распределенной команды
+              <p className="text-[11px] text-amber-100/70">
+                WhisperX & AI Pipeline • Luxury Voice Management
               </p>
             </div>
           </div>
 
           {/* Tab Selection */}
-          <div className="flex items-center bg-slate-800 p-1 rounded-md text-xs font-medium border border-slate-700">
+          <div className="flex items-center bg-slate-900/90 p-1 rounded-lg text-xs font-medium border border-amber-900/30 shadow-inner">
             <button
               id="tab-dashboard-btn"
               onClick={() => onSelectTab('dashboard')}
-              className={`px-3 py-1.5 rounded transition-colors ${
+              className={`px-3 py-1.5 rounded transition-all ${
                 activeTab === 'dashboard'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-amber-700/80 text-white font-semibold shadow'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
@@ -75,9 +74,9 @@ export const RoleSelector: React.FC<RoleSelectorProps> = ({
             <button
               id="tab-telegram-btn"
               onClick={() => onSelectTab('telegram')}
-              className={`px-3 py-1.5 rounded transition-colors ${
+              className={`px-3 py-1.5 rounded transition-all ${
                 activeTab === 'telegram'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-amber-700/80 text-white font-semibold shadow'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
@@ -86,9 +85,9 @@ export const RoleSelector: React.FC<RoleSelectorProps> = ({
             <button
               id="tab-docker-btn"
               onClick={() => onSelectTab('docker')}
-              className={`px-3 py-1.5 rounded transition-colors ${
+              className={`px-3 py-1.5 rounded transition-all ${
                 activeTab === 'docker'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-amber-700/80 text-white font-semibold shadow'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
@@ -98,7 +97,7 @@ export const RoleSelector: React.FC<RoleSelectorProps> = ({
         </div>
 
         {/* Role Selector Grid */}
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
           {roles.map((r) => {
             const isSelected = currentRole === r.role;
             return (
@@ -106,19 +105,19 @@ export const RoleSelector: React.FC<RoleSelectorProps> = ({
                 key={r.role}
                 id={`role-btn-${r.role}`}
                 onClick={() => onSelectRole(r.role)}
-                className={`text-left p-3 rounded-md border transition-all text-xs ${
+                className={`text-left p-2.5 rounded-lg border transition-all text-xs ${
                   isSelected
-                    ? 'bg-slate-800 border-indigo-500 ring-1 ring-indigo-500'
-                    : 'bg-slate-900/60 border-slate-800 hover:bg-slate-800/80 hover:border-slate-700'
+                    ? 'bg-amber-950/60 border-amber-500/80 ring-1 ring-amber-500/50 text-white'
+                    : 'bg-slate-900/60 border-slate-800 hover:bg-slate-800/80 hover:border-slate-700 text-slate-300'
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-200">{r.title}</span>
+                  <span className="font-semibold text-slate-100">{r.title}</span>
                   {isSelected && (
-                    <span className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse"></span>
+                    <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse"></span>
                   )}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">{r.subtitle}</div>
+                <div className="text-[10px] text-amber-200/60 mt-0.5">{r.subtitle}</div>
               </button>
             );
           })}
@@ -127,3 +126,4 @@ export const RoleSelector: React.FC<RoleSelectorProps> = ({
     </div>
   );
 };
+
