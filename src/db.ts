@@ -13,7 +13,8 @@ import {
   ProcessedText,
   Translation,
   BrandingConfig,
-  OpenRouterConfig
+  OpenRouterConfig,
+  MacWorkerSettings
 } from './types.js';
 
 const dataDir = path.join(process.cwd(), 'data');
@@ -38,7 +39,31 @@ export interface DatabaseState {
   activationCodes: { code: string; assistantId: string; used: boolean; createdAt: string }[];
   brandingConfig?: BrandingConfig;
   openrouterConfig?: OpenRouterConfig;
+  macWorkerSettings?: MacWorkerSettings;
+  onboardingCompleted?: boolean;
 }
+
+export const defaultMacWorkerSettings: MacWorkerSettings = {
+  activeWorkerCount: 2,
+  workers: [
+    {
+      id: 'worker-1',
+      name: 'Mac Worker 1 (Анна)',
+      telegramId: '1002',
+      workerUrl: 'http://localhost:8000',
+      assignedAssistantName: 'Ассистент 1 (Анна)',
+      active: true
+    },
+    {
+      id: 'worker-2',
+      name: 'Mac Worker 2 (Игорь)',
+      telegramId: '1003',
+      workerUrl: 'http://localhost:8001',
+      assignedAssistantName: 'Ассистент 2 (Игорь)',
+      active: true
+    }
+  ]
+};
 
 const defaultOpenRouterConfig: OpenRouterConfig = {
   apiKey: process.env.OPENROUTER_API_KEY || '',
@@ -194,7 +219,6 @@ export function loadDb(): DatabaseState {
         }
       }
       if (!memoryDb.brandingConfig) {
-
         memoryDb.brandingConfig = {
           logo_url: '',
           company_name: 'Voice CRM',
@@ -202,6 +226,9 @@ export function loadDb(): DatabaseState {
           background_pattern_enabled: true,
           updated_at: new Date().toISOString()
         };
+      }
+      if (!memoryDb.macWorkerSettings) {
+        memoryDb.macWorkerSettings = defaultMacWorkerSettings;
       }
     } else {
       saveDb(defaultDbState);

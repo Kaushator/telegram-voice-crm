@@ -253,3 +253,27 @@ export interface OpenRouterConfig {
   updatedAt?: string;
 }
 
+export interface WorkerNodeConfig {
+  id: string;
+  name: string;
+  telegramId: string;
+  workerUrl: string;
+  assignedAssistantName: string;
+  active: boolean;
+}
+
+export interface MacWorkerSettings {
+  activeWorkerCount: number;
+  workers: WorkerNodeConfig[];
+}
+
+export interface OnboardingConfig {
+  telegramToken: string;
+  openRouterApiKey: string;
+  stage1Model: string;
+  stage2Model: string;
+  workerInternalSecret: string;
+  activeWorkerCount: number;
+  workers: WorkerNodeConfig[];
+}
+

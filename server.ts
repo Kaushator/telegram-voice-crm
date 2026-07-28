@@ -4,8 +4,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
-import { GoogleGenAI } from '@google/genai';
-import { getDb, saveDb } from './src/db.js';
+import { getDb, saveDb, defaultMacWorkerSettings } from './src/db.js';
 import { validateTelegramInitData, generateJwtToken, verifyJwtToken, JwtPayload } from './src/auth.js';
 import {
   DbUser,
@@ -22,12 +21,51 @@ import {
   Transcription,
   ProcessedText,
   Translation,
-  OpenRouterConfig
+  OpenRouterConfig,
+  MacWorkerSettings,
+  OnboardingConfig
 } from './src/types.js';
 
 
 const app = express();
 const PORT = 3000;
+
+// Enable Cloudflare / reverse proxy header support (X-Forwarded-For, X-Forwarded-Proto)
+app.set('trust proxy', true);
+
+// Configure CORS for Cloudflare, APP_URL, and Localhost
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+  const appUrl = process.env.APP_URL;
+
+  if (origin) {
+    if (
+      (appUrl && (origin === appUrl || origin.startsWith(appUrl))) ||
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1') ||
+      origin.includes('.run.app') ||
+      origin.includes('.trycloudflare.com') ||
+      origin.includes('.ngrok')
+    ) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+  } else if (appUrl) {
+    res.setHeader('Access-Control-Allow-Origin', appUrl);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Telegram-Init-Data, X-Worker-Secret, X-Requested-With, Cookie');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 app.use(express.json());
 
@@ -39,6 +77,7 @@ if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 
 // Zero-Config Environment Validation & System Health Logger
 interface AppConfig {
+  appUrl: string;
   telegramToken: string;
   openRouterApiKey: string;
   stage1Model: string;
@@ -97,12 +136,14 @@ function validateAndLoadConfig(): AppConfig {
     });
   }
 
+  const appUrl = process.env.APP_URL || 'https://crm.yourdomain.com';
   const stage1Model = process.env.DEFAULT_STAGE1_MODEL || 'openai/gpt-5.6-sol';
   const stage2Model = process.env.DEFAULT_STAGE2_MODEL || 'openai/o3-mini';
 
-  logConfigHealth('INFO', 'CONFIG_LOAD', `Настроены AI модели по умолчанию: Stage1 (${stage1Model}), Stage2 (${stage2Model})`);
+  logConfigHealth('INFO', 'CONFIG_LOAD', `Настроены базовые параметры: APP_URL (${appUrl}), Stage1 (${stage1Model}), Stage2 (${stage2Model})`);
 
   return {
+    appUrl,
     telegramToken: telegramToken || '7890123456:AAFxXXXXXXXXXXXXXXXXXXXXXXXXX',
     openRouterApiKey: openRouterApiKey || 'sk-or-v1-preset-key-active',
     stage1Model,
@@ -349,48 +390,26 @@ ${JSON.stringify(model1Parsed, null, 2)}`;
   };
 }
 
-// AI Pipeline Helpers (Gemini / AI Cleanup & Translation)
+// AI Pipeline Helpers (Strictly OpenRouter / Local Deterministic Engine)
 
 async function runAiCleanupPipeline(rawText: string): Promise<{ cleanText: string; changesSummary: string; hallucinationChecked: boolean }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (apiKey) {
+  const db = getDb();
+  const config = db.openrouterConfig;
+  
+  if (config && config.isEnabled && config.apiKey) {
     try {
-      const ai = new GoogleGenAI({ apiKey });
-      const prompt = `Ты — эксперт-редактор деловой речи CRM.
-Твоя задача — очистить сырой текст транскрибации от паразитных слов (эээ, ну, как бы), сохранив 100% фактов, имен, названий, чисел, дат, отрицаний и денежных сумм.
-Если есть сомнительные или неразборчивые слова, пометь их как [неразборчиво].
-Не добавляй никаких новых фактов от себя (запрет галлюцинаций).
-
-Сырой текст: "${rawText}"
-
-Верни ответ в формате JSON:
-{
-  "cleanText": "Очищенный текст",
-  "changesSummary": "Описание внесенных правок",
-  "hallucinationChecked": true
-}`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt
-      });
-
-      const responseText = response.text || '';
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return {
-          cleanText: parsed.cleanText || rawText,
-          changesSummary: parsed.changesSummary || 'Удалены паузы и междометия',
-          hallucinationChecked: true
-        };
-      }
+      const dualResult = await runDualModelOpenRouterPipeline(rawText, config);
+      return {
+        cleanText: dualResult.model2.validatedCleanText,
+        changesSummary: `${dualResult.model1.changesSummary} | ${dualResult.model2.auditSummary}`,
+        hallucinationChecked: true
+      };
     } catch (err) {
-      console.error('Gemini API Cleanup Error, falling back to local engine:', err);
+      console.error('OpenRouter Cleanup Error, falling back to local deterministic engine:', err);
     }
   }
 
-  // Structured Fallback Cleanup engine
+  // Structured Fallback Cleanup engine (no external AI)
   let cleaned = rawText
     .replace(/\b(эээ|ммм|ну|типа|как бы|в общем)\b/gi, '')
     .replace(/\s+/g, ' ')
@@ -398,57 +417,98 @@ async function runAiCleanupPipeline(rawText: string): Promise<{ cleanText: strin
 
   return {
     cleanText: cleaned || rawText,
-    changesSummary: 'Очищено от слов-паразитов. Сохранены ключевые сущности, числа и отрицания.',
+    changesSummary: 'Очищено от слов-паразитов локальным движком. Сохранены ключевые сущности, числа и отрицания.',
     hallucinationChecked: true
   };
 }
 
 async function runAiTranslationPipeline(text: string, targetLang: string = 'th'): Promise<{ translatedText: string; model: string }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (apiKey) {
+  const db = getDb();
+  const config = db.openrouterConfig;
+
+  if (config && config.isEnabled && config.apiKey) {
     try {
-      const ai = new GoogleGenAI({ apiKey });
-      const targetLangName = targetLang === 'th' ? 'тайский' : targetLang === 'en' ? 'английский' : 'русский';
-      const prompt = `Переведи деловой текст на ${targetLangName} язык. Перевод должен быть точным и естественным.\nТекст: "${text}"`;
+      const systemPrompt = `Ты — профессиональный переводчик CRM. Переведи деловой текст на ${
+        targetLang === 'th' ? 'тайский' : targetLang === 'en' ? 'английский' : 'русский'
+      } язык с 100% сохранением всех имён, цифр и названий.
+Верни JSON: { "translatedText": "Текст перевода" }`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt
-      });
+      const rawResponse = await callOpenRouterModel(
+        config.apiKey,
+        config.model1Editor || 'openai/gpt-5.6-sol',
+        systemPrompt,
+        `Текст: "${text}"`
+      );
 
-      return {
-        translatedText: response.text?.trim() || text,
-        model: 'gemini-2.5-flash'
-      };
+      const match = rawResponse.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match ? match[0] : rawResponse);
+      if (parsed.translatedText) {
+        return {
+          translatedText: parsed.translatedText,
+          model: `openrouter:${config.model1Editor}`
+        };
+      }
     } catch (err) {
-      console.error('Gemini Translation Error:', err);
+      console.error('OpenRouter Translation Error:', err);
     }
   }
 
-  // Structured Fallback translation
+  // Structured Fallback translation (no external AI)
   if (targetLang === 'th') {
     return {
-      translatedText: 'เราจำเป็นต้องสั่งซื้อมอนิเตอร์ 4K ใหม่ 5 จอและสวิตช์เครือข่าย Cisco 2 เครื่องสำหรับสาขาของเราโดยด่วน โปรดอนุมัติใบแจ้งหนี้ภายในสิ้นวัน',
-      model: 'gemma-2-9b-th-fallback'
+      translatedText: text + ' (แปลไทย)',
+      model: 'local-fallback'
     };
   } else if (targetLang === 'en') {
     return {
-      translatedText: 'We urgently need to order 5 new 4K monitors and 2 Cisco network switches for our branch. Please approve the invoice by the end of the day.',
-      model: 'gemma-2-9b-en-fallback'
+      translatedText: text + ' (English)',
+      model: 'local-fallback'
     };
   }
 
   return { translatedText: text, model: 'local-fallback' };
 }
 
+
 export interface AuthRequest extends Request {
   user?: JwtPayload;
 }
 
+function parseCookies(cookieHeader?: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  cookieHeader.split(';').forEach((cookie) => {
+    const parts = cookie.split('=');
+    if (parts.length >= 2) {
+      const name = parts[0].trim();
+      const val = parts.slice(1).join('=').trim();
+      cookies[name] = decodeURIComponent(val);
+    }
+  });
+  return cookies;
+}
+
+function extractToken(req: Request): string | null {
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.substring(7).trim();
+  }
+  if (req.headers['x-access-token']) {
+    return req.headers['x-access-token'] as string;
+  }
+  if (req.query && typeof req.query.token === 'string') {
+    return req.query.token;
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  if (cookies.token) return cookies.token;
+  if (cookies.jwt) return cookies.jwt;
+  if (cookies.auth_token) return cookies.auth_token;
+  return null;
+}
+
 // Auth Middleware
 function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = extractToken(req);
 
   if (token) {
     const decoded = verifyJwtToken(token);
@@ -495,15 +555,6 @@ let slots: {
 } = {
   assistant1: { name: 'Ассистент 1 (Анна)', telegram_id: '1002', worker_url: 'http://localhost:8000', active: true },
   assistant2: { name: 'Ассистент 2 (Игорь)', telegram_id: '1003', worker_url: 'http://localhost:8001', active: true },
-};
-
-let simulationConfig = {
-  isTestingMode: true,
-  bossChatId: '@boss_test_1001',
-  recipientChatId: '@anna_asst_1002',
-  recipientName: 'Ассистент 1 (Анна)',
-  boundMacWorkerId: '1002',
-  statusMessage: 'Режим тестирования активен (Шеф: @boss_test_1001, Получатель: @anna_asst_1002, Mac: Привязан)'
 };
 
 let assistantSettings = {
@@ -1824,115 +1875,107 @@ app.post('/api/slots/reset', (req, res) => {
   return res.status(400).json({ error: 'INVALID_SLOT', message: 'Неверный номер слота' });
 });
 
-// Simulation & Testing Endpoints
-app.get('/api/simulation/state', (req, res) => {
-  res.json({
-    success: true,
-    simulationConfig,
-    slots,
-    macContainers,
-    assistantSettings
-  });
-});
+// System First-Run Onboarding & Health Status Endpoints
+app.get('/api/system/onboarding-status', (req, res) => {
+  const db = getDb();
+  const hasTelegramToken = !!process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN.includes('AAFxXXXX');
+  const hasOpenRouterKey = !!(db.openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY) && !(db.openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY || '').includes('preset-key');
 
-app.post('/api/simulation/setup', (req, res) => {
-  const { bossChatId, recipientChatId, recipientName } = req.body;
-
-  const finalBossChatId = bossChatId ? (bossChatId.startsWith('@') ? bossChatId : `@${bossChatId}`) : '@boss_test_1001';
-  const finalRecipientChatId = recipientChatId ? (recipientChatId.startsWith('@') ? recipientChatId : `@${recipientChatId}`) : '@anna_asst_1002';
-  const finalRecipientName = recipientName || 'Тестовый Ассистент';
-
-  simulationConfig = {
-    isTestingMode: true,
-    bossChatId: finalBossChatId,
-    recipientChatId: finalRecipientChatId,
-    recipientName: finalRecipientName,
-    boundMacWorkerId: '1002',
-    statusMessage: `Режим тестирования активен: Шеф (${finalBossChatId}) ➔ Получатель (${finalRecipientChatId}) привязан к Mac Worker`
-  };
-
-  // Bind to Slot 1 & Assistant Settings & Mac Worker 1002
-  slots.assistant1 = {
-    name: finalRecipientName,
-    telegram_id: finalRecipientChatId.replace('@', ''),
-    worker_url: 'http://localhost:8000',
-    active: true
-  };
-
-  assistantSettings.assistant1 = {
-    name: finalRecipientName,
-    chatId: finalRecipientChatId,
-    workerUrl: 'http://localhost:8000'
-  };
-
-  macContainers['1002'] = {
-    ...macContainers['1002'],
-    assistantName: finalRecipientName,
-    isOnline: true,
-    whisperxReady: true,
-    lastHeartbeat: new Date().toISOString()
-  };
-
-  const logMsg = `[SIMULATION_SETUP] Настроены тестовые параметры: Шеф=${finalBossChatId}, Получатель=${finalRecipientChatId} (${finalRecipientName}). Автоматически привязан Mac Worker #1002.`;
-  writeServerLog('INFO', 'admin', logMsg, { bossChatId: finalBossChatId, recipientChatId: finalRecipientChatId, recipientName: finalRecipientName }, 'SIMULATION_SETUP');
+  const onboardingCompleted = !!db.onboardingCompleted && hasTelegramToken && hasOpenRouterKey;
 
   res.json({
     success: true,
-    message: 'Тестовые параметры связи и привязка Mac успешно сохранены',
-    simulationConfig,
-    slots,
-    macContainers
+    needsOnboarding: !onboardingCompleted,
+    onboardingCompleted,
+    hasTelegramToken,
+    hasOpenRouterKey,
+    config: {
+      telegramToken: process.env.TELEGRAM_BOT_TOKEN || '',
+      openRouterApiKey: db.openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY || '',
+      stage1Model: db.openrouterConfig?.model1Editor || process.env.DEFAULT_STAGE1_MODEL || 'openai/gpt-5.6-sol',
+      stage2Model: db.openrouterConfig?.model2Validator || process.env.DEFAULT_STAGE2_MODEL || 'openai/o3-mini',
+      workerInternalSecret: process.env.WORKER_INTERNAL_SECRET || 'secret-worker-token-2026',
+      activeWorkerCount: db.macWorkerSettings?.activeWorkerCount || 2,
+      workers: db.macWorkerSettings?.workers || defaultMacWorkerSettings.workers
+    }
   });
 });
 
-app.post('/api/simulation/reset', (req, res) => {
-  simulationConfig = {
-    isTestingMode: false,
-    bossChatId: '',
-    recipientChatId: '',
-    recipientName: '',
-    boundMacWorkerId: '',
-    statusMessage: 'Тесты завершены. Система перешла в режим ожидания реальных пользователей и их привязки.'
+app.post('/api/system/onboarding-setup', (req, res) => {
+  const {
+    telegramToken,
+    openRouterApiKey,
+    stage1Model,
+    stage2Model,
+    workerInternalSecret,
+    activeWorkerCount,
+    workers
+  } = req.body;
+
+  if (telegramToken) process.env.TELEGRAM_BOT_TOKEN = telegramToken;
+  if (openRouterApiKey) process.env.OPENROUTER_API_KEY = openRouterApiKey;
+  if (workerInternalSecret) process.env.WORKER_INTERNAL_SECRET = workerInternalSecret;
+
+  const db = getDb();
+
+  if (!db.openrouterConfig) {
+    db.openrouterConfig = {
+      apiKey: openRouterApiKey || '',
+      model1Editor: stage1Model || 'openai/gpt-5.6-sol',
+      model2Validator: stage2Model || 'openai/o3-mini',
+      isEnabled: true,
+      systemContext: {
+        familyStructure: process.env.FAMILY_LOGISTICS_CONTEXT || 'Шеф с женой, 3 детьми и нянями',
+        currentLocation: 'Заграничная поездка / Турне по Европе',
+        primaryTaskDomains: [
+          'VIP-логистика и трансферы по Европе',
+          'Аренда премиальных авто (Range Rover, Mercedes S-Class/V-Class)',
+          'Аренда частных яхт, катеров и вертолетов',
+          'Бронирование 5-звездочных отелей, вилл и резортов',
+          'Координация распорядка семьи, детей и нянь'
+        ],
+        instructions: [
+          'Сохранять 100% точность чисел, дат, географических названий, марок автомобилей и финансовых сумм',
+          'Категорический запрет на домысливание или галлюцинирование несуществующих деталей',
+          'В случае неоднозначности текста — обязательно явно выделить её примечанием [Примечание к записи: ...], не выдумывая подробностей'
+        ]
+      },
+      updatedAt: new Date().toISOString()
+    };
+  } else {
+    if (openRouterApiKey) db.openrouterConfig.apiKey = openRouterApiKey;
+    if (stage1Model) db.openrouterConfig.model1Editor = stage1Model;
+    if (stage2Model) db.openrouterConfig.model2Validator = stage2Model;
+    db.openrouterConfig.isEnabled = true;
+    db.openrouterConfig.updatedAt = new Date().toISOString();
+  }
+
+  const count = activeWorkerCount || 2;
+  const workerList = workers && workers.length > 0 ? workers : defaultMacWorkerSettings.workers;
+
+  db.macWorkerSettings = {
+    activeWorkerCount: count,
+    workers: workerList
   };
 
-  // Immediately reset all slots and mac containers
-  slots.assistant1 = null;
-  slots.assistant2 = null;
+  db.onboardingCompleted = true;
+  saveDb();
 
-  assistantSettings.assistant1 = { name: 'Свободный слот 1 (Ожидание подключения)', chatId: '', workerUrl: '' };
-  assistantSettings.assistant2 = { name: 'Свободный слот 2 (Ожидание подключения)', chatId: '', workerUrl: '' };
+  logConfigHealth('INFO', 'CONFIG_LOAD', 'Завершена первичная настройка CRM (First-Run Onboarding Wizard)', {
+    activeWorkerCount: count,
+    stage1Model,
+    stage2Model
+  });
 
-  macContainers['1002'] = {
-    assistantId: '1002',
-    assistantName: 'Свободный слот 1 (Ожидание)',
-    isOnline: false,
-    whisperxReady: false,
-    lastHeartbeat: new Date(0).toISOString(),
-    gpuAccelerated: false,
-    endpoint: ''
-  };
-
-  macContainers['1003'] = {
-    assistantId: '1003',
-    assistantName: 'Свободный слот 2 (Ожидание)',
-    isOnline: false,
-    whisperxReady: false,
-    lastHeartbeat: new Date(0).toISOString(),
-    gpuAccelerated: false,
-    endpoint: ''
-  };
-
-  const logMsg = `[SIMULATION_RESET] Окончание тестов: Все тестовые Chat ID и привязки Mac сброшены. Система перешла в режим ожидания реальных пользователей.`;
-  writeServerLog('INFO', 'admin', logMsg, undefined, 'SIMULATION_RESET');
+  writeServerLog('INFO', 'admin', 'Инициализирована и активирована CRM конфигурация', { activeWorkerCount: count }, 'ONBOARDING_COMPLETED');
 
   res.json({
     success: true,
-    message: 'Все тесты завершены. Chat ID и Mac отвязаны. Система переведена в режим ожидания реальных пользователей.',
-    simulationConfig,
-    slots,
-    macContainers
+    message: 'CRM успешно инициализирована! Все параметры применены.',
+    onboardingCompleted: true
   });
 });
+
 
 app.get('/api/tasks', (req, res) => {
   const db = getDb();

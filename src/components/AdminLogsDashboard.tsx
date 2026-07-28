@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { LogEntry } from '../types';
-import { SimulationTestingControl } from './SimulationTestingControl';
 import { MacDeploymentGuide } from './MacDeploymentGuide';
 import { MacWorkerConfigurator } from './MacWorkerConfigurator';
 
@@ -98,11 +97,9 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Simulation & Testing Control Panel */}
-      <SimulationTestingControl />
-
       {/* Mac Worker Configurator & File Generator */}
       <MacWorkerConfigurator />
+
 
       {/* Deployment Guide for Employee MacBooks */}
       <MacDeploymentGuide />

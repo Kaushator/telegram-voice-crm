@@ -4,6 +4,7 @@ import { RoleSelector } from './components/RoleSelector';
 import { TelegramSimulator } from './components/TelegramSimulator';
 import { AdminLogsDashboard } from './components/AdminLogsDashboard';
 import { MacContainerStatus } from './components/MacContainerStatus';
+import { FirstRunOnboardingWizard } from './components/FirstRunOnboardingWizard';
 
 export default function App() {
   const [currentRole, setCurrentRole] = useState<UserRole>('boss');
@@ -11,6 +12,23 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [containers, setContainers] = useState<Record<string, MacContainerState>>({});
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+
+  const checkOnboarding = async () => {
+    try {
+      const res = await fetch('/api/system/onboarding-status');
+      const data = await res.json();
+      if (data.needsOnboarding) {
+        setNeedsOnboarding(true);
+        setIsOnboardingOpen(true);
+      } else {
+        setNeedsOnboarding(false);
+      }
+    } catch (err) {
+      console.error('Error checking onboarding status', err);
+    }
+  };
 
   const fetchTasks = async () => {
     try {
@@ -43,6 +61,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    checkOnboarding();
     fetchTasks();
     fetchLogs();
     fetchContainers();
@@ -52,6 +71,7 @@ export default function App() {
     }, 3000);
     return () => clearInterval(interval);
   }, []);
+
 
   const handleSendVoiceMessage = async (title: string, durationSec: number) => {
     try {
@@ -186,6 +206,19 @@ export default function App() {
           <MacContainerStatus containers={containers} />
         )}
       </main>
+
+      <FirstRunOnboardingWizard
+        isOpen={isOnboardingOpen}
+        isInitialBlocker={needsOnboarding}
+        onClose={() => setIsOnboardingOpen(false)}
+        onSuccess={() => {
+          setIsOnboardingOpen(false);
+          setNeedsOnboarding(false);
+          fetchTasks();
+          fetchLogs();
+        }}
+      />
     </div>
   );
+
 }

@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserRole, Task, TaskMessage } from '../types';
 import { initTelegramWebApp, triggerHaptic } from '../utils/telegramSdk';
-import { TestingChecklist } from './TestingChecklist';
 import { EdenLogo } from './EdenLogo';
-import { SimulationTestingControl } from './SimulationTestingControl';
 import { MacDeploymentGuide } from './MacDeploymentGuide';
 import { MacWorkerConfigurator } from './MacWorkerConfigurator';
 import { OpenRouterAdminControl } from './OpenRouterAdminControl';
@@ -563,33 +561,11 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
               <span className="text-[10px] text-slate-400 font-mono">Доступ: Разрешен (Admin ID)</span>
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto text-xs pb-1">
-              <button
-                onClick={() => setAdminSubTab('system_ai')}
-                className={`px-3 py-1 rounded-lg font-bold text-xs whitespace-nowrap transition-all ${adminSubTab === 'system_ai' ? 'bg-sky-600 text-white shadow-md' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-              >
-                ⚡ Система & AI (Zero-Config)
-              </button>
-              <button
-                onClick={() => setAdminSubTab('simulation')}
-                className={`px-3 py-1 rounded-lg font-medium text-xs whitespace-nowrap transition-all ${adminSubTab === 'simulation' ? 'bg-amber-600 text-white shadow-md' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-              >
-                🧪 Отладка Chat ID
-              </button>
-              <button
-                onClick={() => setAdminSubTab('checklist')}
-                className={`px-3 py-1 rounded-lg font-medium text-xs whitespace-nowrap transition-all ${adminSubTab === 'checklist' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-              >
-                📋 Чек-лист UI
-              </button>
-            </div>
-
-            {/* Unified Admin SubTab Content */}
-            {adminSubTab === 'system_ai' && <SystemAiAdminControl />}
-            {adminSubTab === 'simulation' && <SimulationTestingControl />}
-            {adminSubTab === 'checklist' && <TestingChecklist />}
+            {/* Unified Admin Control */}
+            <SystemAiAdminControl />
           </div>
         )}
+
 
         {/* TASK FEED LIST */}
         <div className="space-y-3 z-10 relative">
