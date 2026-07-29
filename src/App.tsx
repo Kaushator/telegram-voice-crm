@@ -9,6 +9,8 @@ import { initTelegramWebApp } from './utils/telegramSdk';
 
 export default function App() {
   const [isInitializing, setIsInitializing] = useState(true);
+  const [hasError, setHasError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<UserRole | null>(null);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'telegram' | 'docker'>('telegram');
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -31,7 +33,7 @@ export default function App() {
     try {
       const res = await fetch('/api/system/onboarding-status');
       const data = await res.json();
-      if (data.needsOnboarding) {
+      if (data && data.needsOnboarding) {
         setNeedsOnboarding(true);
         setIsOnboardingOpen(true);
       } else {
@@ -85,9 +87,10 @@ export default function App() {
 
   const authenticate = async () => {
     try {
-      const tgInitData = window.Telegram?.WebApp?.initData || '';
+      const tg = typeof window !== 'undefined' ? window?.Telegram?.WebApp : null;
+      const tgInitData = tg?.initData || '';
       
-      if (tgInitData) {
+      if (tg && tgInitData) {
         const res = await fetch('/api/auth/me', {
           method: 'POST',
           headers: {
@@ -135,14 +138,44 @@ export default function App() {
   };
 
   useEffect(() => {
-    initTelegramWebApp();
-    
-    authenticate().finally(() => {
-      setTimeout(() => {
-        setIsInitializing(false);
-        checkOnboarding();
-      }, 1200); // Wait minimum 1.2s for splash screen
-    });
+    let isSubscribed = true;
+
+    const initializeApp = async () => {
+      try {
+        const tg = typeof window !== 'undefined' ? window?.Telegram?.WebApp : null;
+        if (tg) {
+          if (typeof tg.ready === 'function') tg.ready();
+          if (typeof tg.expand === 'function') tg.expand();
+        } else {
+          initTelegramWebApp();
+        }
+
+        await authenticate();
+        if (isSubscribed) {
+          await checkOnboarding();
+        }
+      } catch (err: any) {
+        console.error('Fatal initialization error:', err);
+        if (isSubscribed) {
+          setHasError(true);
+          setErrorMessage(err?.message || 'Ошибка загрузки системы');
+        }
+      } finally {
+        if (isSubscribed) {
+          setTimeout(() => {
+            if (isSubscribed) {
+              setIsInitializing(false);
+            }
+          }, 800);
+        }
+      }
+    };
+
+    initializeApp();
+
+    return () => {
+      isSubscribed = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -258,21 +291,41 @@ export default function App() {
     window.open('/api/logs/download', '_blank');
   };
 
+  if (hasError) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 text-white p-6 text-center">
+        <div className="max-w-md w-full bg-slate-900 border border-red-500/30 rounded-2xl p-6 shadow-2xl space-y-6 flex flex-col items-center">
+          <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-3xl">
+            ⚠️
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-xl font-bold text-white tracking-widest font-serif">GARDENS OF EDEN CRM</h1>
+            <p className="text-sm text-slate-300 font-medium">
+              Произошла ошибка загрузки
+            </p>
+            {errorMessage && (
+              <p className="text-xs text-slate-400 font-mono bg-slate-950 p-2.5 rounded-lg border border-slate-800 break-words w-full">
+                {errorMessage}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-6 py-2.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white font-bold text-xs rounded-xl shadow-lg transition-all border border-amber-500/40 active:scale-95"
+          >
+            Перезапустить
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (isInitializing) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 text-white overflow-hidden">
-        {/* Background Video */}
-        <video
-          autoPlay
-          muted
-          loop
-          playsInline
-          className="absolute inset-0 w-full h-full object-cover scale-105 filter brightness-75"
-          src="/welcome.webm"
-        />
-
-        {/* Dark overlay with subtle gradient */}
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/85 via-slate-900/80 to-slate-950/90 backdrop-blur-xs" />
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-b from-slate-950 via-slate-900 to-black text-white overflow-hidden">
+        {/* Ambient CSS glow background elements */}
+        <div className="absolute -top-32 -left-32 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
         {/* Content Container */}
         <div className="relative z-10 flex flex-col items-center max-w-md px-6 text-center space-y-6 animate-fade-in">
@@ -311,23 +364,15 @@ export default function App() {
     );
   }
 
-  const inTelegram = !!(window.Telegram?.WebApp?.initData);
+  const tg = typeof window !== 'undefined' ? window?.Telegram?.WebApp : null;
+  const inTelegram = !!(tg?.initData);
   
   if (currentRole === 'pending') {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 text-white overflow-hidden">
-        {/* Background Video */}
-        <video
-          autoPlay
-          muted
-          loop
-          playsInline
-          className="absolute inset-0 w-full h-full object-cover scale-105 filter brightness-75 opacity-70"
-          src="/welcome.webm"
-        />
-
-        {/* Dark overlay */}
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/90 via-slate-900/80 to-slate-950/95 backdrop-blur-sm" />
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-b from-slate-950 via-slate-900 to-black text-white overflow-hidden">
+        {/* Ambient CSS glow background elements */}
+        <div className="absolute -top-32 -left-32 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
         {/* Content Container */}
         <div className="relative z-10 flex flex-col items-center max-w-md px-6 text-center space-y-8 animate-fade-in">
