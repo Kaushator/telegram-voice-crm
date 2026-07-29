@@ -239,12 +239,22 @@ export function loadDb(): DatabaseState {
   return memoryDb;
 }
 
+export function safeWriteJsonFile(filePath: string, data: any): void {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const tempPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).substring(2, 8)}`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tempPath, filePath);
+}
+
 export function saveDb(state?: DatabaseState): void {
   try {
     if (state) memoryDb = state;
-    fs.writeFileSync(dbFilePath, JSON.stringify(memoryDb, null, 2), 'utf-8');
+    safeWriteJsonFile(dbFilePath, memoryDb);
   } catch (err) {
-    console.error('Failed to save DB file', err);
+    console.error('Failed to save DB file safely', err);
   }
 }
 

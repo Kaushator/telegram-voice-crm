@@ -102,6 +102,18 @@ export interface Translation {
   created_at: string;
 }
 
+export interface TaskFile {
+  id: string;
+  task_id: string;
+  file_name: string;
+  file_path: string;
+  file_size: number;
+  file_type: string;
+  uploaded_by_role: string;
+  uploaded_by_name: string;
+  uploaded_at: string;
+}
+
 export interface TaskStateHistory {
   timestamp: string;
   from_status: DbTaskStatus;
@@ -135,6 +147,7 @@ export interface DbTask {
   assigned_at?: string;
   completed_at?: string;
   title?: string;
+  files?: TaskFile[];
   audio_parts?: DbTaskAudioPart[];
   history?: TaskStateHistory[];
   transcription?: Transcription;
@@ -210,6 +223,7 @@ export interface Task {
   takenAt?: string;
   completedAt?: string;
   createdAt: string;
+  files?: TaskFile[];
   questions?: TaskQuestion[];
   audioPartsCount?: number;
   history?: TaskStateHistory[];

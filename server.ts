@@ -23,7 +23,10 @@ import {
   Translation,
   OpenRouterConfig,
   MacWorkerSettings,
-  OnboardingConfig
+  OnboardingConfig,
+  Task,
+  TaskQuestion,
+  TaskFile
 } from './src/types.js';
 
 
@@ -37,13 +40,6 @@ app.set('trust proxy', true);
 app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
   const appUrl = process.env.APP_URL;
-
-  res.removeHeader('X-Frame-Options');
-  res.setHeader(
-    'Content-Security-Policy',
-    "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org"
-  );
-  res.setHeader('X-Content-Type-Options', 'nosniff');
 
   if (origin) {
     if (
@@ -622,48 +618,21 @@ let macContainers: Record<string, any> = {
   }
 };
 
-function updateWorkerUrl(workerId: string, url: string) {
-  const normalizedWorkerId = String(workerId).trim();
-  const now = new Date().toISOString();
-  const db = getDb();
-  const profile = db.assistantProfiles.find(profile => profile.mac_worker_id === normalizedWorkerId);
-  const assistantId = profile?.user_id || (normalizedWorkerId.includes('1003') ? 'usr-1003' : 'usr-1002');
-  const slotKey = assistantId === 'usr-1003' || normalizedWorkerId === '1003' ? 'assistant2' : 'assistant1';
-  const containerKey = slotKey === 'assistant2' ? '1003' : '1002';
-
-  if (slots[slotKey]) {
-    slots[slotKey].worker_url = url;
+const upload = multer({
+  dest: uploadDir,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB max size
+    files: 5
+  },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const dangerousExts = ['.exe', '.bat', '.cmd', '.sh', '.js', '.ts', '.php', '.py', '.pl', '.vbs', '.scr', '.html', '.htm'];
+    if (dangerousExts.includes(ext)) {
+      return cb(new Error('Загрузка исполняемых или потенциально опасных файлов (.exe, .sh, .js, .php) запрещена по соображениям безопасности.'));
+    }
+    cb(null, true);
   }
-
-  assistantSettings[slotKey].workerUrl = url;
-  macContainers[containerKey].endpoint = url;
-  macContainers[containerKey].isOnline = true;
-  macContainers[containerKey].lastHeartbeat = now;
-
-  let device = db.workerDevices.find(device => device.device_token === normalizedWorkerId || device.id === normalizedWorkerId);
-  if (!device) {
-    device = {
-      id: 'dev-' + Date.now(),
-      assistant_id: assistantId,
-      device_token: normalizedWorkerId,
-      status: 'online',
-      last_heartbeat: now,
-      hostname: `${normalizedWorkerId}.local`,
-      gpu_info: 'Mac Worker'
-    };
-    db.workerDevices.push(device);
-  } else {
-    device.assistant_id = assistantId;
-    device.status = 'online';
-    device.last_heartbeat = now;
-  }
-
-  saveDb();
-
-  return { slotKey, containerKey, device };
-}
-
-const upload = multer({ dest: uploadDir });
+});
 
 function transitionTaskStatus(
   task: DbTask,
@@ -1813,43 +1782,6 @@ app.post('/api/settings', (req, res) => {
   res.json({ success: true, settings: assistantSettings, slots });
 });
 
-app.post('/api/workers/register', (req: Request, res: Response) => {
-  const { worker_id, secret, url } = req.body;
-  const expectedSecret = process.env.WORKER_INTERNAL_SECRET;
-
-  if (!expectedSecret) {
-    console.error('[Worker Sync] WORKER_INTERNAL_SECRET is not configured');
-    return res.status(500).json({ error: 'Server misconfigured: WORKER_INTERNAL_SECRET is not set' });
-  }
-
-  if (secret !== expectedSecret) {
-    console.warn(`[Worker Sync] Попытка несанкционированного подключения воркера: ${worker_id}`);
-    return res.status(403).json({ error: 'Unauthorized: Invalid secret token' });
-  }
-
-  if (!url || !worker_id) {
-    return res.status(400).json({ error: 'Bad Request: Missing worker_id or url' });
-  }
-
-  const updatedWorker = updateWorkerUrl(worker_id, url);
-
-  console.log(`[Worker Sync] Воркер ${worker_id} успешно зарегистрирован. Новый URL: ${url}`);
-  writeServerLog(
-    'INFO',
-    'mac_worker',
-    `Воркер ${worker_id} успешно зарегистрирован через Worker Sync`,
-    { worker_id, url, slot: updatedWorker.slotKey, deviceId: updatedWorker.device.id },
-    'WORKER_SYNC_REGISTER'
-  );
-
-  res.json({
-    status: 'success',
-    message: 'Worker URL updated successfully',
-    worker_id,
-    updated_url: url
-  });
-});
-
 // Slot Management API: Worker Registration
 app.post('/api/register-worker', (req, res) => {
   const { name, telegram_id, worker_url } = req.body;
@@ -1987,89 +1919,78 @@ app.get('/api/system/onboarding-status', (req, res) => {
 });
 
 app.post('/api/system/onboarding-setup', (req, res) => {
-  const setupData = req.body;
-  const telegramToken = setupData.telegramToken || setupData.telegram_bot_token;
-  const openRouterApiKey = setupData.openRouterApiKey || setupData.openrouter_api_key;
-  const stage1Model = setupData.stage1Model || setupData.stage1_model;
-  const stage2Model = setupData.stage2Model || setupData.stage2_model;
-  const workerInternalSecret = setupData.workerInternalSecret || setupData.worker_internal_secret;
-  const activeWorkerCount = setupData.activeWorkerCount || setupData.active_worker_count;
-  const workers = setupData.workers;
+  const {
+    telegramToken,
+    openRouterApiKey,
+    stage1Model,
+    stage2Model,
+    workerInternalSecret,
+    activeWorkerCount,
+    workers
+  } = req.body;
 
-  console.log('[Onboarding] Получены параметры первичной настройки:', {
-    hasBotToken: !!telegramToken,
-    hasOpenRouterKey: !!openRouterApiKey,
-    workersCount: workers?.length || activeWorkerCount || 1
+  if (telegramToken) process.env.TELEGRAM_BOT_TOKEN = telegramToken;
+  if (openRouterApiKey) process.env.OPENROUTER_API_KEY = openRouterApiKey;
+  if (workerInternalSecret) process.env.WORKER_INTERNAL_SECRET = workerInternalSecret;
+
+  const db = getDb();
+
+  if (!db.openrouterConfig) {
+    db.openrouterConfig = {
+      apiKey: openRouterApiKey || '',
+      model1Editor: stage1Model || 'openai/gpt-5.6-sol',
+      model2Validator: stage2Model || 'openai/o3-mini',
+      isEnabled: true,
+      systemContext: {
+        familyStructure: process.env.FAMILY_LOGISTICS_CONTEXT || 'Шеф с женой, 3 детьми и нянями',
+        currentLocation: 'Заграничная поездка / Турне по Европе',
+        primaryTaskDomains: [
+          'VIP-логистика и трансферы по Европе',
+          'Аренда премиальных авто (Range Rover, Mercedes S-Class/V-Class)',
+          'Аренда частных яхт, катеров и вертолетов',
+          'Бронирование 5-звездочных отелей, вилл и резортов',
+          'Координация распорядка семьи, детей и нянь'
+        ],
+        instructions: [
+          'Сохранять 100% точность чисел, дат, географических названий, марок автомобилей и финансовых сумм',
+          'Категорический запрет на домысливание или галлюцинирование несуществующих деталей',
+          'В случае неоднозначности текста — обязательно явно выделить её примечанием [Примечание к записи: ...], не выдумывая подробностей'
+        ]
+      },
+      updatedAt: new Date().toISOString()
+    };
+  } else {
+    if (openRouterApiKey) db.openrouterConfig.apiKey = openRouterApiKey;
+    if (stage1Model) db.openrouterConfig.model1Editor = stage1Model;
+    if (stage2Model) db.openrouterConfig.model2Validator = stage2Model;
+    db.openrouterConfig.isEnabled = true;
+    db.openrouterConfig.updatedAt = new Date().toISOString();
+  }
+
+  const count = activeWorkerCount || 2;
+  const workerList = workers && workers.length > 0 ? workers : defaultMacWorkerSettings.workers;
+
+  db.macWorkerSettings = {
+    activeWorkerCount: count,
+    workers: workerList
+  };
+
+  db.onboardingCompleted = true;
+  saveDb();
+
+  logConfigHealth('INFO', 'CONFIG_LOAD', 'Завершена первичная настройка CRM (First-Run Onboarding Wizard)', {
+    activeWorkerCount: count,
+    stage1Model,
+    stage2Model
   });
 
-  try {
-    if (telegramToken) process.env.TELEGRAM_BOT_TOKEN = telegramToken;
-    if (openRouterApiKey) process.env.OPENROUTER_API_KEY = openRouterApiKey;
-    if (workerInternalSecret) process.env.WORKER_INTERNAL_SECRET = workerInternalSecret;
+  writeServerLog('INFO', 'admin', 'Инициализирована и активирована CRM конфигурация', { activeWorkerCount: count }, 'ONBOARDING_COMPLETED');
 
-    const db = getDb();
-
-    if (!db.openrouterConfig) {
-      db.openrouterConfig = {
-        apiKey: openRouterApiKey || '',
-        model1Editor: stage1Model || 'openai/gpt-5.6-sol',
-        model2Validator: stage2Model || 'openai/o3-mini',
-        isEnabled: true,
-        systemContext: {
-          familyStructure: process.env.FAMILY_LOGISTICS_CONTEXT || 'Шеф с женой, 3 детьми и нянями',
-          currentLocation: 'Заграничная поездка / Турне по Европе',
-          primaryTaskDomains: [
-            'VIP-логистика и трансферы по Европе',
-            'Аренда премиальных авто (Range Rover, Mercedes S-Class/V-Class)',
-            'Аренда частных яхт, катеров и вертолетов',
-            'Бронирование 5-звездочных отелей, вилл и резортов',
-            'Координация распорядка семьи, детей и нянь'
-          ],
-          instructions: [
-            'Сохранять 100% точность чисел, дат, географических названий, марок автомобилей и финансовых сумм',
-            'Категорический запрет на домысливание или галлюцинирование несуществующих деталей',
-            'В случае неоднозначности текста — обязательно явно выделить её примечанием [Примечание к записи: ...], не выдумывая подробностей'
-          ]
-        },
-        updatedAt: new Date().toISOString()
-      };
-    } else {
-      if (openRouterApiKey) db.openrouterConfig.apiKey = openRouterApiKey;
-      if (stage1Model) db.openrouterConfig.model1Editor = stage1Model;
-      if (stage2Model) db.openrouterConfig.model2Validator = stage2Model;
-      db.openrouterConfig.isEnabled = true;
-      db.openrouterConfig.updatedAt = new Date().toISOString();
-    }
-
-    const count = activeWorkerCount || 2;
-    const workerList = workers && workers.length > 0 ? workers : defaultMacWorkerSettings.workers;
-
-    db.macWorkerSettings = {
-      activeWorkerCount: count,
-      workers: workerList
-    };
-
-    db.onboardingCompleted = true;
-    saveDb();
-
-    logConfigHealth('INFO', 'CONFIG_LOAD', 'Завершена первичная настройка CRM (First-Run Onboarding Wizard)', {
-      activeWorkerCount: count,
-      stage1Model,
-      stage2Model
-    });
-
-    writeServerLog('INFO', 'admin', 'Инициализирована и активирована CRM конфигурация', { activeWorkerCount: count }, 'ONBOARDING_COMPLETED');
-
-    res.json({
-      success: true,
-      status: 'success',
-      message: 'Onboarding configuration saved successfully',
-      onboardingCompleted: true
-    });
-  } catch (error: any) {
-    console.error('[Onboarding Error]:', error);
-    res.status(500).json({ error: 'Failed to save configuration' });
-  }
+  res.json({
+    success: true,
+    message: 'CRM успешно инициализирована! Все параметры применены.',
+    onboardingCompleted: true
+  });
 });
 
 
@@ -2080,14 +2001,69 @@ app.get('/api/tasks', (req, res) => {
 
 app.post('/api/tasks', upload.single('audio'), async (req, res) => {
   try {
-    const { bossId, title, duration } = req.body;
+    const { bossId, title, duration, forceNew } = req.body;
     const durationSec = parseInt(duration || '60', 10);
-    const taskId = 'task-' + Date.now();
-
+    const chiefId = bossId || '1001';
     const db = getDb();
+
+    // Check if there is an active (non-completed/cancelled/failed) task for Chief
+    const activeUiTask = forceNew === 'true'
+      ? null
+      : tasks.find(t =>
+          (t.bossId === chiefId || t.bossId === '1001') &&
+          t.status !== 'completed' &&
+          t.status !== 'cancelled' &&
+          t.status !== 'failed'
+        );
+
+    if (activeUiTask) {
+      // Logic "Дописать к текущей": Append audio/duration to existing active task
+      const activeDbTask = db.tasks.find(t => t.id === activeUiTask.id);
+      const existingParts = db.taskAudioParts.filter(p => p.task_id === activeUiTask.id);
+      const nextSeq = existingParts.length + 1;
+
+      const audioPart: DbTaskAudioPart = {
+        id: 'part-' + Date.now() + '-' + nextSeq,
+        task_id: activeUiTask.id,
+        file_path: req.file ? `/api/audio/${path.basename(req.file.path)}` : `/api/audio/part-${nextSeq}.mp3`,
+        sequence_number: nextSeq,
+        duration: durationSec,
+        created_at: new Date().toISOString()
+      };
+      db.taskAudioParts.push(audioPart);
+
+      activeUiTask.voiceMessage.durationSeconds += durationSec;
+      activeUiTask.audioPartsCount = nextSeq;
+
+      if (title && !activeUiTask.title.includes(title)) {
+        activeUiTask.title += ` + ${title}`;
+      }
+
+      if (activeDbTask) {
+        if (title && !activeDbTask.title?.includes(title)) {
+          activeDbTask.title += ` + ${title}`;
+        }
+      }
+
+      saveDb();
+
+      const logMsg = `Дозапись к текущей задаче #${activeUiTask.id}: добавлено +${durationSec} сек (часть ${nextSeq}).`;
+      writeServerLog('INFO', 'boss', logMsg, { taskId: activeUiTask.id, nextSeq, durationSec }, 'APPEND_TASK_VOICE');
+
+      return res.json({
+        success: true,
+        appended: true,
+        task: activeUiTask,
+        audioPart,
+        message: `Успешно добавлено к активной задаче #${activeUiTask.id}`
+      });
+    }
+
+    // Create new task if no active task exists
+    const taskId = 'task-' + Date.now();
     const dbTask: DbTask = {
       id: taskId,
-      created_by: bossId || '1001',
+      created_by: chiefId,
       status: 'available',
       source_language: 'ru',
       target_language: 'th',
@@ -2095,30 +2071,45 @@ app.post('/api/tasks', upload.single('audio'), async (req, res) => {
       title: title || `Задание #${taskId.slice(-4)}`
     };
     db.tasks.unshift(dbTask);
+
+    const initialPart: DbTaskAudioPart = {
+      id: 'part-' + Date.now() + '-1',
+      task_id: taskId,
+      file_path: req.file ? `/api/audio/${path.basename(req.file.path)}` : `/api/audio/part-1.mp3`,
+      sequence_number: 1,
+      duration: durationSec,
+      created_at: new Date().toISOString()
+    };
+    db.taskAudioParts.push(initialPart);
     saveDb();
 
-    const newTask = {
+    const newTask: Task = {
       id: taskId,
-      bossId: bossId || '1001',
+      bossId: chiefId,
       title: title || `Задание #${taskId.slice(-4)}`,
       voiceMessage: {
         id: 'voice-' + Date.now(),
-        audioUrl: req.file ? `/api/audio/${path.basename(req.file.path)}` : undefined,
+        audioUrl: initialPart.file_path,
         durationSeconds: durationSec,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        translationEn: 'We urgently need to process this request for our branch.',
+        translationTh: 'เราจำเป็นต้องดำเนินการตามคำขอนี้สำหรับสาขาของเราโดยด่วน',
+        summaryTh: 'สรุป: ดำเนินการตามคำขอสำหรับสาขา'
       },
       status: 'pending',
       createdAt: new Date().toISOString(),
-      questions: []
+      questions: [],
+      audioPartsCount: 1
     };
 
     tasks.unshift(newTask);
 
-    const logMsg = `Шеф создал задание ${taskId} (${durationSec} сек). Отправлено в Telegram ассистентам с кнопкой [💻 โน้ตบุ๊กเปิดอยู่ / รับงาน]`;
+    const logMsg = `Шеф создал задание ${taskId} (${durationSec} сек). Мгновенное оповещение ассистентов.`;
     writeServerLog('INFO', 'boss', logMsg, { taskId }, 'CREATE_TASK');
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
+      appended: false,
       task: newTask,
       dbTask,
       telegramNotificationSent: true
@@ -2126,6 +2117,117 @@ app.post('/api/tasks', upload.single('audio'), async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Questions & Answers Endpoints
+app.post('/api/tasks/:id/question', (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { questionTh, questionText, assistantId, assistantName } = req.body;
+  const qText = questionTh || questionText || 'สอบถามรายละเอียดเพิ่มเติมเกี่ยวกับงานนี้';
+
+  const uiTask = tasks.find(t => t.id === id);
+  if (!uiTask) {
+    return res.status(404).json({ error: 'TASK_NOT_FOUND', message: 'Задача не найдена' });
+  }
+
+  const qId = 'q-' + Date.now();
+  const newQuestion: TaskQuestion = {
+    id: qId,
+    assistantId: assistantId || 'usr-1002',
+    assistantName: assistantName || 'Ассистент 1 (Анна)',
+    questionTh: qText,
+    questionRu: `Уточнение от ассистента: ${qText}`,
+    createdAt: new Date().toISOString()
+  };
+
+  if (!uiTask.questions) uiTask.questions = [];
+  uiTask.questions.push(newQuestion);
+
+  const logMsg = `Ассистент ${newQuestion.assistantName} задал вопрос по задаче #${id}: "${qText}"`;
+  writeServerLog('INFO', 'assistant', logMsg, { taskId: id, qId }, 'TASK_QUESTION_ASKED');
+
+  return res.status(201).json({ success: true, question: newQuestion });
+});
+
+app.post('/api/tasks/:id/reply', (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { questionId, replyRu } = req.body;
+
+  const uiTask = tasks.find(t => t.id === id);
+  if (!uiTask) {
+    return res.status(404).json({ error: 'TASK_NOT_FOUND', message: 'Задача не найдена' });
+  }
+
+  const question = uiTask.questions?.find(q => q.id === questionId);
+  if (!question) {
+    return res.status(404).json({ error: 'QUESTION_NOT_FOUND', message: 'Вопрос не найден' });
+  }
+
+  question.replyRu = replyRu || 'Ответ Шефа';
+  question.replyTh = `[คำตอบจากหัวหน้า]: ${replyRu}`;
+  question.repliedAt = new Date().toISOString();
+
+  const logMsg = `Шеф дал ответ на вопрос #${questionId} в задаче #${id}: "${replyRu}"`;
+  writeServerLog('INFO', 'chief', logMsg, { taskId: id, questionId, replyRu }, 'TASK_QUESTION_REPLIED');
+
+  return res.json({ success: true, question });
+});
+
+app.post('/api/tasks/:id/questions', (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { questionText, assistantId, assistantName } = req.body;
+
+  const db = getDb();
+  const dbTask = db.tasks.find(t => t.id === id);
+  const uiTask = tasks.find(t => t.id === id);
+
+  if (!dbTask && !uiTask) {
+    return res.status(404).json({ error: 'TASK_NOT_FOUND', message: 'Задача не найдена' });
+  }
+
+  const qId = 'q-' + Date.now();
+  const newQuestion: TaskQuestion = {
+    id: qId,
+    assistantId: assistantId || req.user?.userId || 'usr-1002',
+    assistantName: assistantName || req.user?.displayName || 'Ассистент 1 (Анна)',
+    questionTh: questionText || 'สอบถามรายละเอียดเพิ่มเติมเกี่ยวกับงานนี้',
+    questionRu: questionText || 'Вопрос по уточненным деталям задания',
+    createdAt: new Date().toISOString()
+  };
+
+  if (uiTask) {
+    if (!uiTask.questions) uiTask.questions = [];
+    uiTask.questions.push(newQuestion);
+  }
+
+  const logMsg = `Ассистент ${newQuestion.assistantName} задал вопрос по задаче #${id}: "${newQuestion.questionRu}"`;
+  writeServerLog('INFO', 'assistant', logMsg, { taskId: id, qId }, 'TASK_QUESTION_ASKED');
+
+  return res.status(201).json({ success: true, question: newQuestion });
+});
+
+app.post('/api/tasks/:id/questions/:qId/reply', (req: AuthRequest, res) => {
+  const { id, qId } = req.params;
+  const { replyText } = req.body;
+
+  const uiTask = tasks.find(t => t.id === id);
+  if (!uiTask) {
+    return res.status(404).json({ error: 'TASK_NOT_FOUND', message: 'Задача не найдена' });
+  }
+
+  const question = uiTask.questions?.find(q => q.id === qId);
+  if (!question) {
+    return res.status(404).json({ error: 'QUESTION_NOT_FOUND', message: 'Вопрос не найден' });
+  }
+
+  question.replyRu = replyText || 'Ответ Шефа на вопрос';
+  question.replyTh = `[คำตอบจากหัวหน้า]: ${replyText}`;
+  question.repliedAt = new Date().toISOString();
+
+  const logMsg = `Шеф дал ответ на вопрос #${qId} в задаче #${id}: "${replyText}"`;
+  writeServerLog('INFO', 'chief', logMsg, { taskId: id, qId, replyText }, 'TASK_QUESTION_REPLIED');
+
+  return res.json({ success: true, question });
 });
 
 app.post('/api/tasks/:id/complete', (req: AuthRequest, res) => {
@@ -2187,6 +2289,101 @@ app.get('/api/audio/:filename', (req, res) => {
     res.sendFile(filepath);
   } else {
     res.status(404).send('Audio file not found');
+  }
+});
+
+// File Exchange API (Chief <-> Assistant)
+const handleTaskFileUpload = (req: AuthRequest, res: any) => {
+  const id = req.params.taskId || req.params.id;
+  const senderRole = req.user?.role || req.body.uploaded_by_role || req.body.role || 'chief';
+  const senderName = req.user?.displayName || req.body.uploaded_by_name || req.body.name || (senderRole === 'boss' || senderRole === 'chief' ? 'Шеф' : 'Ассистент');
+
+  const db = getDb();
+  const dbTask = db.tasks.find(t => t.id === id);
+  const uiTask = tasks.find(t => t.id === id);
+
+  if (!dbTask && !uiTask) {
+    return res.status(404).json({ error: 'TASK_NOT_FOUND', message: 'Задача не найдена' });
+  }
+
+  // Create task specific directory on VPS inside uploads/tasks/id
+  const taskFilesDir = path.join(uploadDir, 'tasks', id);
+  if (!fs.existsSync(taskFilesDir)) {
+    fs.mkdirSync(taskFilesDir, { recursive: true });
+  }
+
+  let finalFileName = req.body.fileName || 'document.pdf';
+  let finalFilePath = '/api/files/sample.pdf';
+  let fileSize = 1024;
+  let fileType = 'application/pdf';
+
+  if (req.file) {
+    const targetPath = path.join(taskFilesDir, req.file.filename);
+    fs.copyFileSync(req.file.path, targetPath);
+    finalFileName = req.file.originalname;
+    finalFilePath = `/api/files/tasks/${id}/${req.file.filename}`;
+    fileSize = req.file.size;
+    fileType = req.file.mimetype;
+  }
+
+  const taskFile: TaskFile = {
+    id: 'file-' + Date.now(),
+    task_id: id,
+    file_name: finalFileName,
+    file_path: finalFilePath,
+    file_size: fileSize,
+    file_type: fileType,
+    uploaded_by_role: senderRole,
+    uploaded_by_name: senderName,
+    uploaded_at: new Date().toISOString()
+  };
+
+  if (dbTask) {
+    if (!dbTask.files) dbTask.files = [];
+    dbTask.files.push(taskFile);
+    saveDb();
+  }
+
+  if (uiTask) {
+    if (!uiTask.files) uiTask.files = [];
+    uiTask.files.push(taskFile);
+  }
+
+  const logMsg = `Прикреплен файл "${finalFileName}" к задаче #${id} пользователем ${senderName} (${senderRole}). Сохранено на VPS.`;
+  writeServerLog('INFO', 'file_exchange', logMsg, { taskId: id, file: taskFile }, 'FILE_UPLOADED');
+
+  return res.status(201).json({ success: true, file: taskFile, taskId: id });
+};
+
+app.post('/api/tasks/:id/files', upload.single('file'), handleTaskFileUpload);
+app.post('/api/tasks/:taskId/upload', upload.single('file'), handleTaskFileUpload);
+
+app.get('/api/tasks/:id/files', (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const db = getDb();
+  const dbTask = db.tasks.find(t => t.id === id);
+  const uiTask = tasks.find(t => t.id === id);
+
+  const files = uiTask?.files || dbTask?.files || [];
+  return res.json({ success: true, taskId: id, files });
+});
+
+app.get('/api/files/tasks/:taskId/:filename', (req, res) => {
+  const { taskId, filename } = req.params;
+  const filepath = path.join(uploadDir, 'tasks', taskId, filename);
+  if (fs.existsSync(filepath)) {
+    res.sendFile(filepath);
+  } else {
+    res.status(404).send('File not found');
+  }
+});
+
+app.get('/api/files/:filename', (req, res) => {
+  const filepath = path.join(uploadDir, req.params.filename);
+  if (fs.existsSync(filepath)) {
+    res.sendFile(filepath);
+  } else {
+    res.status(404).send('File not found');
   }
 });
 

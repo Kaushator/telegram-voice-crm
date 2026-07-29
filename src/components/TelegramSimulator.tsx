@@ -6,6 +6,7 @@ import { MacDeploymentGuide } from './MacDeploymentGuide';
 import { MacWorkerConfigurator } from './MacWorkerConfigurator';
 import { OpenRouterAdminControl } from './OpenRouterAdminControl';
 import { SystemAiAdminControl } from './SystemAiAdminControl';
+import { FileUploader } from './FileUploader';
 
 
 interface TelegramSimulatorProps {
@@ -55,6 +56,10 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   const [conflictErrors, setConflictErrors] = useState<Record<string, string>>({});
   const [activeTabMap, setActiveTabMap] = useState<Record<string, 'chat' | 'history' | 'pipeline'>>({});
   const [simulatingWorker, setSimulatingWorker] = useState<string | null>(null);
+
+  // Assistant & Chief UX states
+  const [expandedTranscripts, setExpandedTranscripts] = useState<Record<string, boolean>>({});
+  const [quickReplyTexts, setQuickReplyTexts] = useState<Record<string, string>>({});
 
   // Admin Data State
   const [adminSubTab, setAdminSubTab] = useState<'system_ai' | 'simulation' | 'checklist'>('system_ai');
@@ -618,31 +623,104 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                     )}
                   </div>
 
-                  {/* Main Task Content (English for Assistant, Russian for Chief/Admin) */}
+                  {/* Main Task Content (English + Thai Summary for Assistant, Russian for Chief) */}
                   {currentRole.startsWith('assistant') ? (
-                    <div className="space-y-1.5 bg-slate-950/80 p-2.5 rounded-lg border border-slate-800">
-                      <div className="text-[10px] text-sky-400 font-mono font-bold uppercase tracking-wider flex justify-between">
-                        <span>Task Specification (English):</span>
-                        <span className="text-slate-500 font-normal">Working Language</span>
+                    <div className="space-y-2 bg-slate-950/80 p-3 rounded-lg border border-slate-800">
+                      {/* 1. English AI Processed Version */}
+                      <div className="space-y-1">
+                        <div className="text-[10px] text-sky-400 font-mono font-bold uppercase tracking-wider flex justify-between">
+                          <span>Task Specification (English AI Version):</span>
+                          <span className="text-slate-500 font-normal">Working Language</span>
+                        </div>
+                        <div className="text-slate-100 text-xs leading-relaxed font-medium bg-slate-900/90 p-2.5 rounded border border-slate-800">
+                          {task.voiceMessage.translationEn || 'We urgently need to order 5 new 4K monitors and 2 Cisco network switches for our branch. Please approve the invoice by the end of the day.'}
+                        </div>
                       </div>
-                      <div className="text-slate-100 text-xs leading-relaxed font-medium">
-                        {task.voiceMessage.translationEn || 'We urgently need to order 5 new 4K monitors and 2 Cisco network switches for our branch. Please approve the invoice by the end of the day.'}
+
+                      {/* 2. Thai Summary */}
+                      <div className="space-y-1 pt-1 border-t border-slate-900">
+                        <div className="text-[10px] text-emerald-400 font-mono font-bold uppercase tracking-wider flex justify-between">
+                          <span>🇹🇭 สรุปสาระสำคัญ (Thai Summary):</span>
+                          <span className="text-slate-500 font-normal">สำหรับผู้ช่วย</span>
+                        </div>
+                        <div className="text-emerald-200 text-xs leading-relaxed italic bg-emerald-950/30 p-2 rounded border border-emerald-900/50">
+                          {task.voiceMessage.summaryTh || task.voiceMessage.translationTh || 'เราจำเป็นต้องสั่งซื้อจอมอนิเตอร์ 4K ใหม่ 5 จอและสวิตช์เครือข่าย Cisco 2 เครื่องสำหรับสาขาของเราโดยด่วน'}
+                        </div>
                       </div>
-                      {task.voiceMessage.translationTh && (
-                        <details className="text-[11px] text-slate-400 pt-1 border-t border-slate-900 cursor-pointer">
-                          <summary className="hover:text-slate-200">คำแปลภาษาไทย (Thai Translation)</summary>
-                          <p className="pt-1 text-slate-300 italic">{task.voiceMessage.translationTh}</p>
-                        </details>
-                      )}
+
+                      {/* 3. Expandable Full Transcript Accordion */}
+                      <div className="pt-1 border-t border-slate-900">
+                        <button
+                          onClick={() => setExpandedTranscripts((prev) => ({ ...prev, [task.id]: !prev[task.id] }))}
+                          className="text-[11px] text-sky-400 hover:text-sky-300 font-mono flex items-center gap-1 transition-colors font-medium"
+                        >
+                          <span>{expandedTranscripts[task.id] ? '📖 ซ่อนเนื้อหาเต็ม (Hide Transcription)' : '👁 Показать полную расшифровку / Show full transcription'}</span>
+                        </button>
+
+                        {expandedTranscripts[task.id] && (
+                          <div className="mt-2 p-2.5 bg-slate-900 rounded text-[11px] text-slate-300 space-y-1 font-mono border border-slate-800 animate-fadeIn">
+                            <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">[ORIGINAL TRANSCRIPTION / ПОЛНЫЙ ТЕКСТ]:</div>
+                            <p className="whitespace-pre-wrap leading-relaxed text-slate-200">{task.voiceMessage.originalTranscript || task.voiceMessage.translationRu || 'Нам срочно нужно заказать 5 новых 4K мониторов и 2 сетевых коммутатора Cisco для филиала.'}</p>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : (
-                    <div className="space-y-1 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800">
-                      <div className="text-[10px] text-slate-400 font-mono font-bold uppercase tracking-wider">
-                        Поручение Шефа (Русский):
+                    <div className="space-y-2 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800">
+                      <div className="text-[10px] text-slate-400 font-mono font-bold uppercase tracking-wider flex justify-between">
+                        <span>Поручение Шефа (Русский):</span>
+                        {task.audioPartsCount && task.audioPartsCount > 1 && (
+                          <span className="text-sky-400 font-bold">🎙 {task.audioPartsCount} частей аудио</span>
+                        )}
                       </div>
                       <div className="text-slate-100 text-xs leading-relaxed">
                         {task.voiceMessage.translationRu || task.voiceMessage.originalTranscript || 'Инструкция по закупке оборудования'}
                       </div>
+
+                      {/* Questions from Assistants Block for Chief */}
+                      {currentRole === 'boss' && task.questions && task.questions.length > 0 && (
+                        <div className="mt-2 bg-amber-950/30 border border-amber-800/60 p-2.5 rounded-lg space-y-2">
+                          <div className="text-amber-400 text-xs font-bold flex items-center gap-1">
+                            <span>❓ Вопросы от ассистентов ({task.questions.length}):</span>
+                          </div>
+                          {task.questions.map((q) => (
+                            <div key={q.id} className="bg-slate-900 p-2 rounded border border-slate-800 space-y-1.5">
+                              <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                                <span className="text-sky-400 font-bold">{q.assistantName}:</span>
+                                <span>{new Date(q.createdAt).toLocaleTimeString()}</span>
+                              </div>
+                              <div className="text-xs text-slate-200">{q.questionRu}</div>
+                              {q.replyRu ? (
+                                <div className="text-[11px] text-emerald-400 bg-emerald-950/40 p-1.5 rounded font-mono border border-emerald-900/50">
+                                  ✅ Ваш ответ: {q.replyRu}
+                                </div>
+                              ) : (
+                                <div className="flex gap-1.5 pt-1">
+                                  <input
+                                    type="text"
+                                    placeholder="Быстрый ответ..."
+                                    value={quickReplyTexts[q.id] || ''}
+                                    onChange={(e) => setQuickReplyTexts((p) => ({ ...p, [q.id]: e.target.value }))}
+                                    className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-sky-500 focus:outline-none"
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      if (quickReplyTexts[q.id]) {
+                                        onReplyQuestion(task.id, q.id, quickReplyTexts[q.id]);
+                                        setQuickReplyTexts((p) => ({ ...p, [q.id]: '' }));
+                                        triggerHaptic('notification', 'success');
+                                      }
+                                    }}
+                                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold shrink-0"
+                                  >
+                                    Ответить
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -678,6 +756,18 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                       {speed}x
                     </button>
                   </div>
+
+                  {/* File Exchange Section (Chief <-> Assistant) */}
+                  <FileUploader
+                    taskId={task.id}
+                    currentRole={currentRole}
+                    currentAssistantName={currentAssistantName}
+                    files={task.files}
+                    triggerHaptic={triggerHaptic}
+                    onUploadSuccess={() => {
+                      if (onRefreshAll) onRefreshAll();
+                    }}
+                  />
 
                   {/* Status Badge (Thai for Assistant, Russian for Chief/Admin) */}
                   <div className="bg-slate-900 p-2 rounded border border-slate-800 flex items-center justify-between text-[11px]">
