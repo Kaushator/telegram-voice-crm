@@ -38,6 +38,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
   const appUrl = process.env.APP_URL;
 
+  res.removeHeader('X-Frame-Options');
+  res.setHeader(
+    'Content-Security-Policy',
+    "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org"
+  );
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
   if (origin) {
     if (
       (appUrl && (origin === appUrl || origin.startsWith(appUrl))) ||
