@@ -9,12 +9,14 @@ interface AdminLogsDashboardProps {
   logs: LogEntry[];
   onRefreshLogs: () => void;
   onDownloadLogs: () => void;
+  onSwitchToCrm?: () => void;
 }
 
 export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
   logs,
   onRefreshLogs,
   onDownloadLogs,
+  onSwitchToCrm,
 }) => {
   const [chiefTgId, setChiefTgId] = useState('1001');
   const [asst1Name, setAsst1Name] = useState('Ассистент 1 (Анна)');
@@ -100,6 +102,37 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Top Banner with Switch to CRM Button */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-amber-950/80 border border-amber-800/60 rounded-lg text-amber-400 text-lg">
+            👑
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-bold text-white">Панель Администратора</h1>
+              <span className="bg-amber-950 text-amber-300 border border-amber-800/60 text-[10px] font-mono px-2 py-0.5 rounded font-bold">
+                Admin Mode
+              </span>
+            </div>
+            <p className="text-xs text-slate-400">
+              Управление пользователями, системные параметры, логи сервера и настройки воркеров
+            </p>
+          </div>
+        </div>
+
+        {onSwitchToCrm && (
+          <button
+            id="switch-to-crm-btn"
+            onClick={onSwitchToCrm}
+            className="w-full sm:w-auto px-4 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white font-semibold text-xs rounded-lg shadow-md transition-all flex items-center justify-center gap-2 border border-amber-500/40 active:scale-95 shrink-0"
+          >
+            <span>📊</span>
+            <span>Переключить в режим CRM / Задач</span>
+          </button>
+        )}
+      </div>
+
       {/* User Management Section */}
       <UserManagement />
 

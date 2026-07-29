@@ -69,15 +69,17 @@ export const FileUploader: React.FC<FileUploaderProps> = ({
     }
   };
 
+  const isAssistant = currentRole.startsWith('assistant');
+
   return (
     <div className="bg-slate-950/80 p-3 rounded-lg border border-slate-800 space-y-2.5">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-mono font-bold text-sky-400 uppercase tracking-wider flex items-center gap-1.5">
-          📎 Документы и файлы ({files.length}):
+          📎 {isAssistant ? `เอกสารและไฟล์ (${files.length}):` : `Документы и файлы (${files.length}):`}
         </span>
         {isUploading && (
           <span className="text-[10px] font-mono text-amber-400 animate-pulse font-semibold">
-            ⏳ Загрузка файла...
+            ⏳ {isAssistant ? 'กำลังอัปโหลดไฟล์...' : 'Загрузка файла...'}
           </span>
         )}
       </div>
@@ -110,10 +112,12 @@ export const FileUploader: React.FC<FileUploaderProps> = ({
         <div className="flex flex-col items-center justify-center gap-1">
           <span className="text-xl">📁</span>
           <div className="text-xs text-slate-300 font-medium">
-            {isUploading ? 'Сохранение файла на VPS...' : 'Перетащите PDF, билеты, фото или нажмите для выбора'}
+            {isUploading
+              ? isAssistant ? 'กำลังบันทึกไฟล์ไปยัง VPS...' : 'Сохранение файла на VPS...'
+              : isAssistant ? 'ลากและวางไฟล์ PDF, ตั๋ว, รูปภาพ หรือคลิกเพื่อเลือก' : 'Перетащите PDF, билеты, фото или нажмите для выбора'}
           </div>
           <div className="text-[10px] text-slate-500 font-mono">
-            Автоматическое сохранение в директорию uploads/tasks/{taskId}
+            {isAssistant ? `บันทึกอัตโนมัติไปยังไดเรกทอรี uploads/tasks/${taskId}` : `Автоматическое сохранение в директорию uploads/tasks/${taskId}`}
           </div>
         </div>
       </div>
@@ -139,7 +143,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({
                 <div className="truncate">
                   <div className="text-slate-200 font-medium truncate">{f.file_name}</div>
                   <div className="text-[10px] text-slate-500 font-mono">
-                    {f.uploaded_by_name} ({f.uploaded_by_role === 'boss' || f.uploaded_by_role === 'chief' ? 'Шеф' : 'Ассистент'}) • {(f.file_size / 1024).toFixed(1)} KB • {new Date(f.uploaded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {f.uploaded_by_name} ({f.uploaded_by_role === 'boss' || f.uploaded_by_role === 'chief' ? (isAssistant ? 'หัวหน้า' : 'Шеф') : (isAssistant ? 'ผู้ช่วย' : 'Ассистент')}) • {(f.file_size / 1024).toFixed(1)} KB • {new Date(f.uploaded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </div>
                 </div>
               </div>
@@ -149,7 +153,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({
                 rel="noopener noreferrer"
                 className="px-2.5 py-1 bg-sky-950 hover:bg-sky-900 text-sky-300 rounded border border-sky-800/60 text-[11px] font-mono shrink-0 transition-colors flex items-center gap-1 font-semibold"
               >
-                <span>Скачать</span>
+                <span>{isAssistant ? 'ดาวน์โหลด' : 'Скачать'}</span>
                 <span>↗</span>
               </a>
             </div>
@@ -157,7 +161,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({
         </div>
       ) : (
         <div className="text-[11px] text-slate-500 italic font-mono text-center">
-          Нет загруженных файлов.
+          {isAssistant ? 'ยังไม่มีไฟล์ที่อัปโหลด' : 'Нет загруженных файлов.'}
         </div>
       )}
     </div>

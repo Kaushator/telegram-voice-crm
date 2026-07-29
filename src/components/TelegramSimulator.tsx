@@ -18,6 +18,7 @@ interface TelegramSimulatorProps {
   onReplyQuestion: (taskId: string, questionId: string, replyRu: string) => void;
   onCompleteTask: (taskId: string) => void;
   onRefreshAll?: () => void;
+  onSwitchToAdmin?: () => void;
 }
 
 export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
@@ -29,7 +30,8 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   onAskQuestion,
   onReplyQuestion,
   onCompleteTask,
-  onRefreshAll
+  onRefreshAll,
+  onSwitchToAdmin
 }) => {
   // Telegram WebApp Init
   useEffect(() => {
@@ -529,15 +531,25 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
           </div>
         )}
 
-        {/* ADMIN ROLE INTEGRATED DASHBOARD */}
+        {/* ADMIN ROLE INTEGRATED DASHBOARD HEADER */}
         {currentRole === 'admin' && (
-          <div className="space-y-3 bg-slate-900/90 border border-slate-800 rounded-lg p-3">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <span className="font-semibold text-xs text-sky-400">Панель управления администратора</span>
-              <span className="text-[10px] text-slate-400 font-mono">Доступ: Разрешен (Admin ID)</span>
+          <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-xs text-sky-400">📊 Режим CRM / Задач (Администратор)</span>
+              <span className="text-[10px] bg-sky-950 text-sky-300 px-2 py-0.5 rounded border border-sky-800 font-mono">
+                Admin Mode
+              </span>
             </div>
-
-            {/* Unified Admin Control */}
+            {onSwitchToAdmin && (
+              <button
+                id="switch-to-admin-btn"
+                onClick={onSwitchToAdmin}
+                className="px-3 py-1.5 bg-gradient-to-r from-amber-700 to-amber-800 hover:from-amber-600 hover:to-amber-700 text-white font-medium text-xs rounded transition-all flex items-center gap-1.5 shadow border border-amber-600/40 active:scale-95"
+              >
+                <span>⚙️</span>
+                <span>Настройки системы / Админка</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -599,8 +611,8 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                       {/* 1. English AI Processed Version */}
                       <div className="space-y-1">
                         <div className="text-[10px] text-sky-400 font-mono font-bold uppercase tracking-wider flex justify-between">
-                          <span>Task Specification (English AI Version):</span>
-                          <span className="text-slate-500 font-normal">Working Language</span>
+                          <span>รายละเอียดงาน (ภาษาอังกฤษ AI):</span>
+                          <span className="text-slate-500 font-normal">ภาษาหลักสำหรับการทำงาน</span>
                         </div>
                         <div className="text-slate-100 text-xs leading-relaxed font-medium bg-slate-900/90 p-2.5 rounded border border-slate-800">
                           {task.voiceMessage.translationEn || 'We urgently need to order 5 new 4K monitors and 2 Cisco network switches for our branch. Please approve the invoice by the end of the day.'}
@@ -610,7 +622,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                       {/* 2. Thai Summary */}
                       <div className="space-y-1 pt-1 border-t border-slate-900">
                         <div className="text-[10px] text-emerald-400 font-mono font-bold uppercase tracking-wider flex justify-between">
-                          <span>🇹🇭 สรุปสาระสำคัญ (Thai Summary):</span>
+                          <span>🇹🇭 สรุปสาระสำคัญ (ภาษาไทย):</span>
                           <span className="text-slate-500 font-normal">สำหรับผู้ช่วย</span>
                         </div>
                         <div className="text-emerald-200 text-xs leading-relaxed italic bg-emerald-950/30 p-2 rounded border border-emerald-900/50">
@@ -624,12 +636,12 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                           onClick={() => setExpandedTranscripts((prev) => ({ ...prev, [task.id]: !prev[task.id] }))}
                           className="text-[11px] text-sky-400 hover:text-sky-300 font-mono flex items-center gap-1 transition-colors font-medium"
                         >
-                          <span>{expandedTranscripts[task.id] ? '📖 ซ่อนเนื้อหาเต็ม (Hide Transcription)' : '👁 Показать полную расшифровку / Show full transcription'}</span>
+                          <span>{expandedTranscripts[task.id] ? '📖 ซ่อนข้อความเต็ม' : '👁 แสดงข้อความถอดความทั้งหมด'}</span>
                         </button>
 
                         {expandedTranscripts[task.id] && (
                           <div className="mt-2 p-2.5 bg-slate-900 rounded text-[11px] text-slate-300 space-y-1 font-mono border border-slate-800 animate-fadeIn">
-                            <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">[ORIGINAL TRANSCRIPTION / ПОЛНЫЙ ТЕКСТ]:</div>
+                            <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">[ข้อความถอดความต้นฉบับ / FULL TRANSCRIPTION]:</div>
                             <p className="whitespace-pre-wrap leading-relaxed text-slate-200">{task.voiceMessage.originalTranscript || task.voiceMessage.translationRu || 'Нам срочно нужно заказать 5 новых 4K мониторов и 2 сетевых коммутатора Cisco для филиала.'}</p>
                           </div>
                         )}
@@ -808,7 +820,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                                 handleTransferTask(
                                   task.id,
                                   currentAssistantId === 'usr-1002' ? 'usr-1003' : 'usr-1002',
-                                  currentAssistantId === 'usr-1002' ? 'Ассистент 2 (Игорь)' : 'Ассистент 1 (Анна)'
+                                  currentAssistantId === 'usr-1002' ? 'ผู้ช่วย 2 (อิกอร์)' : 'ผู้ช่วย 1 (อันนา)'
                                 )
                               }
                               className="px-2.5 py-1 bg-indigo-700 hover:bg-indigo-600 text-white rounded text-[11px] font-medium"

@@ -102,31 +102,35 @@ export default function App() {
           if (data && data.success && data.role) {
             let mappedRole: UserRole = 'boss';
             const rawRole = data.role;
-            if (rawRole === 'admin') mappedRole = 'boss'; 
-            else if (rawRole === 'assistant') mappedRole = 'assistant_1';
+            if (rawRole === 'admin') {
+              mappedRole = 'admin';
+            } else if (rawRole === 'assistant') mappedRole = 'assistant_1';
             else if (rawRole === 'chief') mappedRole = 'boss';
             else if (rawRole === 'pending') mappedRole = 'pending';
             else if (rawRole === 'kicked') mappedRole = 'kicked';
             setCurrentRole(mappedRole);
-            setActiveTab('telegram');
+            if (mappedRole === 'admin') {
+              setActiveTab('dashboard');
+            } else {
+              setActiveTab('telegram');
+            }
           } else {
-            setCurrentRole(null);
+            setCurrentRole('admin');
+            setActiveTab('dashboard');
           }
         } else {
-            setCurrentRole(null);
+          setCurrentRole('admin');
+          setActiveTab('dashboard');
         }
       } else {
-        // not in telegram
+        // Not in telegram (browser / desktop mode) -> default to Admin Mode (dashboard)
         setCurrentRole('admin');
-        if (window.location.pathname === '/admin') {
-          setActiveTab('dashboard');
-        } else {
-          setActiveTab('telegram');
-        }
+        setActiveTab('dashboard');
       }
     } catch (err) {
       console.error('Splash auth check failed', err);
-      setCurrentRole(null);
+      setCurrentRole('admin');
+      setActiveTab('dashboard');
     }
   };
 
@@ -393,12 +397,13 @@ export default function App() {
         backgroundImage: `linear-gradient(to bottom, rgba(15, 23, 42, 0.82), rgba(15, 23, 42, 0.92)), url('/eden_bg.jpg')`
       }}
     >
-      {(!inTelegram && window.location.pathname === '/admin' && currentRole === 'admin') && (
+      {(!inTelegram || currentRole === 'admin') && (
         <RoleSelector
           currentRole={currentRole}
           onSelectRole={(r) => {
             setCurrentRole(r);
             if (r === 'admin') setActiveTab('dashboard');
+            else setActiveTab('telegram');
           }}
           activeTab={activeTab}
           onSelectTab={setActiveTab}
@@ -420,6 +425,7 @@ export default function App() {
               fetchTasks();
               fetchLogs();
             }}
+            onSwitchToAdmin={() => setActiveTab('dashboard')}
           />
         )}
 
@@ -428,6 +434,7 @@ export default function App() {
             logs={logs}
             onRefreshLogs={fetchLogs}
             onDownloadLogs={handleDownloadLogs}
+            onSwitchToCrm={() => setActiveTab('telegram')}
           />
         )}
 
