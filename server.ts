@@ -615,6 +615,47 @@ let macContainers: Record<string, any> = {
   }
 };
 
+function updateWorkerUrl(workerId: string, url: string) {
+  const normalizedWorkerId = String(workerId).trim();
+  const now = new Date().toISOString();
+  const db = getDb();
+  const profile = db.assistantProfiles.find(profile => profile.mac_worker_id === normalizedWorkerId);
+  const assistantId = profile?.user_id || (normalizedWorkerId.includes('1003') ? 'usr-1003' : 'usr-1002');
+  const slotKey = assistantId === 'usr-1003' || normalizedWorkerId === '1003' ? 'assistant2' : 'assistant1';
+  const containerKey = slotKey === 'assistant2' ? '1003' : '1002';
+
+  if (slots[slotKey]) {
+    slots[slotKey].worker_url = url;
+  }
+
+  assistantSettings[slotKey].workerUrl = url;
+  macContainers[containerKey].endpoint = url;
+  macContainers[containerKey].isOnline = true;
+  macContainers[containerKey].lastHeartbeat = now;
+
+  let device = db.workerDevices.find(device => device.device_token === normalizedWorkerId || device.id === normalizedWorkerId);
+  if (!device) {
+    device = {
+      id: 'dev-' + Date.now(),
+      assistant_id: assistantId,
+      device_token: normalizedWorkerId,
+      status: 'online',
+      last_heartbeat: now,
+      hostname: `${normalizedWorkerId}.local`,
+      gpu_info: 'Mac Worker'
+    };
+    db.workerDevices.push(device);
+  } else {
+    device.assistant_id = assistantId;
+    device.status = 'online';
+    device.last_heartbeat = now;
+  }
+
+  saveDb();
+
+  return { slotKey, containerKey, device };
+}
+
 const upload = multer({ dest: uploadDir });
 
 function transitionTaskStatus(
@@ -1763,6 +1804,43 @@ app.post('/api/settings', (req, res) => {
   writeServerLog('INFO', 'admin', logMsg, { assistantSettings }, 'UPDATE_SETTINGS');
 
   res.json({ success: true, settings: assistantSettings, slots });
+});
+
+app.post('/api/workers/register', (req: Request, res: Response) => {
+  const { worker_id, secret, url } = req.body;
+  const expectedSecret = process.env.WORKER_INTERNAL_SECRET;
+
+  if (!expectedSecret) {
+    console.error('[Worker Sync] WORKER_INTERNAL_SECRET is not configured');
+    return res.status(500).json({ error: 'Server misconfigured: WORKER_INTERNAL_SECRET is not set' });
+  }
+
+  if (secret !== expectedSecret) {
+    console.warn(`[Worker Sync] Попытка несанкционированного подключения воркера: ${worker_id}`);
+    return res.status(403).json({ error: 'Unauthorized: Invalid secret token' });
+  }
+
+  if (!url || !worker_id) {
+    return res.status(400).json({ error: 'Bad Request: Missing worker_id or url' });
+  }
+
+  const updatedWorker = updateWorkerUrl(worker_id, url);
+
+  console.log(`[Worker Sync] Воркер ${worker_id} успешно зарегистрирован. Новый URL: ${url}`);
+  writeServerLog(
+    'INFO',
+    'mac_worker',
+    `Воркер ${worker_id} успешно зарегистрирован через Worker Sync`,
+    { worker_id, url, slot: updatedWorker.slotKey, deviceId: updatedWorker.device.id },
+    'WORKER_SYNC_REGISTER'
+  );
+
+  res.json({
+    status: 'success',
+    message: 'Worker URL updated successfully',
+    worker_id,
+    updated_url: url
+  });
 });
 
 // Slot Management API: Worker Registration
