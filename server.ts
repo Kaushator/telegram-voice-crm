@@ -261,6 +261,104 @@ async function callOpenRouterModel(
   return content;
 }
 
+class TranscriptionQueue {
+  private queue: { taskId: string; runFn: () => Promise<any>; resolve: (val: any) => void; reject: (err: any) => void }[] = [];
+  private processing = false;
+
+  async enqueue(taskId: string, runFn: () => Promise<any>): Promise<any> {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ taskId, runFn, resolve, reject });
+      this.processNext();
+    });
+  }
+
+  private async processNext() {
+    if (this.processing || this.queue.length === 0) return;
+    this.processing = true;
+
+    const current = this.queue.shift();
+    if (current) {
+      try {
+        const result = await current.runFn();
+        current.resolve(result);
+      } catch (err) {
+        current.reject(err);
+      } finally {
+        this.processing = false;
+        this.processNext();
+      }
+    } else {
+      this.processing = false;
+    }
+  }
+}
+
+const transcriptionQueue = new TranscriptionQueue();
+
+async function transcribeAudioViaOpenRouter(audioBuffer: Buffer, mimeType: string): Promise<string> {
+  const db = getDb();
+  const apiKey = db.openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error('OPENROUTER_API_KEY is not configured in environment or database config');
+  }
+
+  const base64Data = audioBuffer.toString('base64');
+  let format = 'mp3';
+  if (mimeType.includes('wav')) format = 'wav';
+  else if (mimeType.includes('ogg')) format = 'ogg';
+  else if (mimeType.includes('m4a')) format = 'm4a';
+
+  // Use openai/gpt-4o-audio-preview as default or fallback
+  const model = db.openrouterConfig?.transcribeModel || 'openai/gpt-4o-audio-preview';
+
+  const requestBody = {
+    model: model,
+    modalities: ["text"],
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Транскрибируй аудиозапись максимально точно. Язык оригинала — преимущественно русский."
+          },
+          {
+            type: "input_audio",
+            input_audio: {
+              data: base64Data,
+              format: format
+            }
+          }
+        ]
+      }
+    ]
+  };
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://gardens-crm.ai',
+      'X-Title': 'Voice CRM Boss Assistant'
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`OpenRouter HTTP ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+  const transcribedText = data.choices?.[0]?.message?.content;
+  if (!transcribedText) {
+    throw new Error('OpenRouter transcription returned empty content or unexpected format');
+  }
+
+  return transcribedText.trim();
+}
+
 async function runDualModelOpenRouterPipeline(
   rawText: string,
   config: OpenRouterConfig
@@ -690,6 +788,19 @@ app.post('/api/admin/set-role', express.json(), (req, res) => {
 });
 
 
+app.post('/api/admin/delete-user', express.json(), (req, res) => {
+  const { userId } = req.body;
+  const db = getDb();
+  const userIndex = db.users.findIndex(u => u.id === userId);
+  if (userIndex !== -1) {
+    db.users.splice(userIndex, 1);
+    saveDb();
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ success: false, error: 'User not found' });
+  }
+});
+
 app.post('/api/admin/unban', express.json(), (req, res) => {
   const { userId } = req.body;
   const db = getDb();
@@ -719,27 +830,6 @@ app.post('/api/admin/kick', express.json(), (req, res) => {
 app.get('/api/auth/me', handleAuthMe);
 app.post('/api/auth/me', handleAuthMe);
 
-let slots: {
-  assistant1: { name: string; telegram_id: string; worker_url: string; active: boolean } | null;
-  assistant2: { name: string; telegram_id: string; worker_url: string; active: boolean } | null;
-} = {
-  assistant1: { name: 'Ассистент 1 (Анна)', telegram_id: '1002', worker_url: 'http://localhost:8000', active: true },
-  assistant2: { name: 'Ассистент 2 (Игорь)', telegram_id: '1003', worker_url: 'http://localhost:8001', active: true },
-};
-
-let assistantSettings = {
-  assistant1: {
-    name: 'Ассистент 1 (Анна)',
-    chatId: '1002',
-    workerUrl: 'http://localhost:8000',
-  },
-  assistant2: {
-    name: 'Ассистент 2 (Игорь)',
-    chatId: '1003',
-    workerUrl: 'http://localhost:8001',
-  }
-};
-
 let tasks: any[] = [
   {
     id: 'task-101',
@@ -763,27 +853,6 @@ let tasks: any[] = [
     questions: []
   }
 ];
-
-let macContainers: Record<string, any> = {
-  '1002': {
-    assistantId: '1002',
-    assistantName: 'Ассистент 1 (Анна)',
-    isOnline: true,
-    whisperxReady: true,
-    lastHeartbeat: new Date().toISOString(),
-    gpuAccelerated: true,
-    endpoint: assistantSettings.assistant1.workerUrl
-  },
-  '1003': {
-    assistantId: '1003',
-    assistantName: 'Ассистент 2 (Игорь)',
-    isOnline: false,
-    whisperxReady: false,
-    lastHeartbeat: new Date(Date.now() - 86400000).toISOString(),
-    gpuAccelerated: false,
-    endpoint: assistantSettings.assistant2.workerUrl
-  }
-};
 
 const upload = multer({
   dest: uploadDir,
@@ -867,10 +936,10 @@ app.get('/api/system/status', (req, res) => {
       isEnabled: db.openrouterConfig?.isEnabled !== false
     },
     macWorkers: {
-      status: 'ready',
-      workerCount: db.workerDevices?.length || 2,
-      syncInterval: parseInt(process.env.WORKER_SYNC_INTERVAL || '30', 10),
-      autoDistribution: true
+      status: 'frozen',
+      workerCount: 0,
+      syncInterval: 30,
+      autoDistribution: false
     }
   });
 });
@@ -910,26 +979,9 @@ app.get('/api/worker/init-config', (req, res) => {
   });
 });
 
-// Protected endpoint for Mac Worker / WhisperX configuration fetch
+// Protected endpoint for Mac Worker / WhisperX configuration fetch (FROZEN/DISABLED)
 app.get('/api/worker/config', (req: Request, res: Response) => {
-  const workerSecret = req.headers['x-worker-secret'];
-  const expectedSecret = process.env.WORKER_INTERNAL_SECRET || 'secret-worker-token-2026';
-
-  if (workerSecret && workerSecret !== expectedSecret) {
-    return res.status(403).json({ error: 'Access denied: invalid worker secret' });
-  }
-
-  const db = getDb();
-  return res.json({
-    success: true,
-    zeroConfig: true,
-    syncInterval: appConfig.workerSyncInterval,
-    models: {
-      stage1: db.openrouterConfig?.model1Editor || appConfig.stage1Model,
-      stage2: db.openrouterConfig?.model2Validator || appConfig.stage2Model,
-    },
-    activeContext: db.openrouterConfig?.systemContext?.familyStructure || appConfig.familyContext
-  });
+  return res.json({ status: "frozen", message: "Mac worker is disabled. OpenRouter is active." });
 });
 
 app.get('/api/admin/openrouter-config', (req, res) => {
@@ -1027,144 +1079,105 @@ app.get('/api/audio/download', (req, res) => {
 });
 
 // ==========================================
-// ЧАСТЬ 3: Mac Worker Polling API & Heartbeat
+// ЧАСТЬ 3: Mac Worker Polling API & Heartbeat (FROZEN/DISABLED)
 // ==========================================
 
 // Worker Heartbeat API (Every 15-30s)
 app.post('/api/worker/heartbeat', (req, res) => {
-  const { deviceToken, status, gpuInfo, hostname } = req.body;
-
-  if (!deviceToken) {
-    return res.status(400).json({ error: 'MISSING_DEVICE_TOKEN', message: 'deviceToken обязателен' });
-  }
-
-  const db = getDb();
-  let device = db.workerDevices.find(d => d.device_token === deviceToken);
-
-  if (!device) {
-    device = {
-      id: 'dev-' + Date.now(),
-      assistant_id: deviceToken.includes('1003') ? 'usr-1003' : 'usr-1002',
-      device_token: deviceToken,
-      status: status || 'idle',
-      last_heartbeat: new Date().toISOString(),
-      hostname: hostname || 'MacBook-Pro.local',
-      gpu_info: gpuInfo || 'Apple M3 Pro (Metal 3)'
-    };
-    db.workerDevices.push(device);
-  } else {
-    device.status = status || device.status;
-    device.last_heartbeat = new Date().toISOString();
-    if (gpuInfo) device.gpu_info = gpuInfo;
-  }
-
-  saveDb();
-
-  // Check if there is an active job assigned to this device's assistant
-  const pendingTask = db.tasks.find(
-    t => t.owner_assistant_id === device?.assistant_id && (t.status === 'assigned' || t.status === 'macbook_pending')
-  );
-
-  return res.json({
-    success: true,
-    status: device.status,
-    hasTask: !!pendingTask,
-    taskId: pendingTask?.id,
-    serverTimestamp: new Date().toISOString()
-  });
+  return res.json({ status: "frozen", message: "Mac worker is disabled. OpenRouter is active." });
 });
 
 // Worker Poll API (Requests work to transcribe)
 app.post('/api/worker/poll', (req, res) => {
-  const { deviceToken } = req.body;
-  const db = getDb();
-
-  const device = db.workerDevices.find(d => d.device_token === deviceToken);
-  if (!device) {
-    return res.status(401).json({ error: 'UNAUTHORIZED_WORKER', message: 'Устройство с таким deviceToken не зарегистрировано' });
-  }
-
-  // Find task assigned to this assistant that needs transcription
-  const task = db.tasks.find(
-    t => t.owner_assistant_id === device.assistant_id && (t.status === 'assigned' || t.status === 'macbook_pending')
-  );
-
-  if (!task) {
-    return res.json({ success: true, task: null, message: 'Нет доступных задач для транскрибации' });
-  }
-
-  // Get audio part and generate signed download URL
-  const audioPart = db.taskAudioParts.find(p => p.task_id === task.id) || {
-    id: 'part-default',
-    file_path: '/api/audio/sample-101.mp3',
-    sequence_number: 1,
-    duration: 120
-  };
-
-  const signedInfo = generateSignedAudioUrl(audioPart.file_path, 3600);
-
-  // Transition status to 'transcribing'
-  transitionTaskStatus(task, 'transcribing', device.id, 'Mac Worker забрал задачу в транскрибацию');
-  saveDb();
-
-  return res.json({
-    success: true,
-    task: {
-      id: task.id,
-      title: task.title,
-      audioUrl: audioPart.file_path,
-      sourceLanguage: task.source_language,
-      targetLanguage: task.target_language
-    },
-    signedUrl: signedInfo.signedUrl,
-    signedUrlExpiresAt: signedInfo.expiresAt
-  });
+  return res.json({ status: "frozen", message: "Mac worker is disabled. OpenRouter is active." });
 });
 
 // Worker Result API (Receives raw WhisperX JSON) & Runs AI Pipeline
 app.post('/api/worker/result', async (req, res) => {
-  const { deviceToken, taskId, rawText, segments, language } = req.body;
+  return res.json({ status: "frozen", message: "Mac worker is disabled. OpenRouter is active." });
+});
+
+async function performOpenRouterTranscription(id: string): Promise<any> {
   const db = getDb();
+  const task = db.tasks.find(t => t.id === id);
+  const uiTask = tasks.find(t => t.id === id);
 
-  const device = db.workerDevices.find(d => d.device_token === deviceToken);
-  if (!device) {
-    return res.status(401).json({ error: 'UNAUTHORIZED_WORKER', message: 'Устройство не авторизовано' });
+  if (!task || !uiTask) {
+    throw new Error('Задача не найдена');
   }
 
-  const task = db.tasks.find(t => t.id === taskId);
-  if (!task) {
-    return res.status(404).json({ error: 'TASK_NOT_FOUND', message: 'Задача не найдена' });
-  }
-
-  // 1. Save Transcription
-  const newTranscription: Transcription = {
-    id: 'tr-' + Date.now(),
-    task_id: taskId,
-    raw_text: rawText || 'Сырой текст транскрибации отсутствует',
-    segments: segments || [],
-    language: language || 'ru',
-    created_at: new Date().toISOString(),
-    worker_id: device.id
-  };
-  db.transcriptions.push(newTranscription);
-  task.transcription = newTranscription;
-
-  writeServerLog('INFO', 'mac_worker', `Принята сырая транскрипция WhisperX от Mac Worker для задачи #${taskId}`, { taskId, language, segmentsCount: segments?.length }, 'WHISPERX_RESULT_RECEIVED');
-
-  // Transition to 'processing'
-  transitionTaskStatus(task, 'processing', 'vps_ai_pipeline', 'Запущен AI Pipeline на VPS (Cleanup & Translation)');
+  // Transition to transcribing
+  transitionTaskStatus(task, 'transcribing', 'openrouter_transcribe', 'Запущена транскрибация через OpenRouter (GPT-4o)');
   saveDb();
 
-  // 2. Check if OpenRouter Dual-Model Pipeline is configured
+  let rawText = '';
+  let usedMock = false;
+
+  const audioPart = db.taskAudioParts.find(p => p.task_id === id);
+  if (audioPart && audioPart.file_path) {
+    const filename = path.basename(audioPart.file_path);
+    const filepath = path.join(uploadDir, filename);
+
+    if (fs.existsSync(filepath)) {
+      try {
+        const audioBuffer = fs.readFileSync(filepath);
+        const mimeType = filename.endsWith('.wav') ? 'audio/wav' : 'audio/mp3';
+        
+        writeServerLog('INFO', 'openrouter_transcribe', `Отправка аудиофайла ${filename} на OpenRouter (GPT-4o) для задачи #${id}`, { taskId: id });
+        rawText = await transcribeAudioViaOpenRouter(audioBuffer, mimeType);
+        writeServerLog('INFO', 'openrouter_transcribe', `Успешная транскрибация через OpenRouter для задачи #${id}`, { rawText });
+      } catch (err: any) {
+        console.error('OpenRouter Transcription Error:', err);
+        const errMsg = `Ошибка транскрибации OpenRouter: ${err.message}`;
+        writeServerLog('ERROR', 'openrouter_transcribe', errMsg, { taskId: id }, 'OPENROUTER_TRANSCRIPTION_FAILED');
+        
+        // Transition task to failed/warning state
+        transitionTaskStatus(task, 'failed', 'openrouter_transcribe', errMsg);
+        saveDb();
+        throw new Error(errMsg);
+      }
+    } else {
+      usedMock = true;
+      rawText = 'Нам срочно нужно заказать 5 новых 4K мониторов и 2 коммутатора Cisco для нашего филиала. Пожалуйста, согласуйте счет до конца сегодняшнего дня.';
+      writeServerLog('INFO', 'openrouter_transcribe', `Файл на диске не найден (${filename}), используется тестовый симулятор для задачи #${id}`, { rawText });
+    }
+  } else {
+    usedMock = true;
+    rawText = 'Нам срочно нужно заказать 5 новых 4K мониторов и 2 коммутатора Cisco для нашего филиала. Пожалуйста, согласуйте счет до конца сегодняшнего дня.';
+    writeServerLog('INFO', 'openrouter_transcribe', `Аудиозапись отсутствует, используется текстовый симулятор для задачи #${id}`, { rawText });
+  }
+
+  // Now, immediately forward to the existing dual-model openrouter pipeline
+  const newTranscription: Transcription = {
+    id: 'tr-' + Date.now(),
+    task_id: id,
+    raw_text: rawText,
+    segments: [
+      { start: 0.0, end: 5.0, text: rawText.substring(0, Math.floor(rawText.length / 2)) },
+      { start: 5.0, end: 10.0, text: rawText.substring(Math.floor(rawText.length / 2)) }
+    ],
+    language: 'ru',
+    created_at: new Date().toISOString(),
+    worker_id: 'openrouter_gpt4o'
+  };
+
+  db.transcriptions.push(newTranscription);
+  task.transcription = newTranscription;
+  uiTask.transcription = newTranscription;
+
+  // Transition to processing
+  transitionTaskStatus(task, 'processing', 'openrouter_pipeline', 'Запущен AI Pipeline (Refined English & Thai Summary)');
+  saveDb();
+
   const openrouterConfig = db.openrouterConfig;
   if (openrouterConfig && openrouterConfig.isEnabled && openrouterConfig.apiKey) {
     try {
-      writeServerLog('INFO', 'vps_ai_pipeline', `Запуск двухуровневого OpenRouter AI Pipeline (${openrouterConfig.model1Editor} -> ${openrouterConfig.model2Validator}) для задачи #${taskId}`);
-      const dualResult = await runDualModelOpenRouterPipeline(newTranscription.raw_text, openrouterConfig);
+      writeServerLog('INFO', 'vps_ai_pipeline', `Запуск двухуровневого OpenRouter AI Pipeline (${openrouterConfig.model1Editor} -> ${openrouterConfig.model2Validator}) для задачи #${id}`);
+      const dualResult = await runDualModelOpenRouterPipeline(rawText, openrouterConfig);
 
       const newProcessedText: ProcessedText = {
         id: 'proc-' + Date.now(),
-        task_id: taskId,
+        task_id: id,
         transcription_id: newTranscription.id,
         clean_text: dualResult.model2.validatedCleanText,
         changes_summary: `${dualResult.model1.changesSummary} | Audit: ${dualResult.model2.auditSummary}`,
@@ -1176,7 +1189,7 @@ app.post('/api/worker/result', async (req, res) => {
 
       const newTranslationEn: Translation = {
         id: 'trans-en-' + Date.now(),
-        task_id: taskId,
+        task_id: id,
         processed_text_id: newProcessedText.id,
         target_language: 'en',
         translated_text: dualResult.model2.validatedTranslationEn,
@@ -1186,7 +1199,7 @@ app.post('/api/worker/result', async (req, res) => {
 
       const newTranslationTh: Translation = {
         id: 'trans-th-' + Date.now(),
-        task_id: taskId,
+        task_id: id,
         processed_text_id: newProcessedText.id,
         target_language: 'th',
         translated_text: dualResult.model2.validatedTranslationTh,
@@ -1197,118 +1210,147 @@ app.post('/api/worker/result', async (req, res) => {
       if (!db.translations) db.translations = [];
       db.translations.push(newTranslationEn, newTranslationTh);
 
-      if (!task.translations) task.translations = [];
-      task.translations.push(newTranslationEn, newTranslationTh);
+      task.translations = [newTranslationEn, newTranslationTh];
 
-      // Transition to 'review'
+      // Transition to review
       transitionTaskStatus(task, 'review', 'vps_openrouter_pipeline', 'OpenRouter (Модель 1 + Модель 2) обработка завершена.');
       saveDb();
 
       // UI update
-      const uiTask = tasks.find(t => t.id === taskId);
-      if (uiTask) {
-        uiTask.status = 'review';
-        uiTask.voiceMessage.originalTranscript = newTranscription.raw_text;
-        uiTask.voiceMessage.translationRu = dualResult.model2.validatedCleanText;
-        uiTask.voiceMessage.translationEn = dualResult.model2.validatedTranslationEn;
-        uiTask.voiceMessage.translationTh = dualResult.model2.validatedTranslationTh;
-        uiTask.transcription = newTranscription;
-        uiTask.processedText = newProcessedText;
-        uiTask.translations = [newTranslationEn, newTranslationTh];
-      }
+      uiTask.status = 'review';
+      uiTask.voiceMessage.originalTranscript = rawText;
+      uiTask.voiceMessage.translationRu = dualResult.model2.validatedCleanText;
+      uiTask.voiceMessage.translationEn = dualResult.model2.validatedTranslationEn;
+      uiTask.voiceMessage.translationTh = dualResult.model2.validatedTranslationTh;
+      uiTask.processedText = newProcessedText;
+      uiTask.translations = [newTranslationEn, newTranslationTh];
 
-      writeServerLog('INFO', 'vps_ai_pipeline', `Завершен OpenRouter Dual-Model Pipeline для задачи #${taskId}: ${dualResult.model2.auditSummary}`, { taskId }, 'OPENROUTER_PIPELINE_COMPLETE');
+      writeServerLog('INFO', 'vps_ai_pipeline', `Завершен OpenRouter Dual-Model Pipeline для задачи #${id}: ${dualResult.model2.auditSummary}`, { taskId: id }, 'OPENROUTER_PIPELINE_COMPLETE');
 
-      return res.json({
+      return {
         success: true,
-        taskId,
+        taskId: id,
         transcription: newTranscription,
         processedText: newProcessedText,
-        translation: newTranslationEn,
         translations: [newTranslationEn, newTranslationTh],
         status: 'review',
         openrouterResult: dualResult
-      });
+      };
     } catch (err: any) {
       console.error('OpenRouter Pipeline Error, falling back to standard pipeline:', err);
       writeServerLog('WARN', 'vps_ai_pipeline', `Ошибка OpenRouter API: ${err.message}. Переход на запасной pipeline.`);
     }
   }
 
-  // 3. Fallback Standard AI Cleanup Pipeline (Gemini or Local Engine)
-  const cleanupResult = await runAiCleanupPipeline(newTranscription.raw_text);
+  // Fallback Standard AI Cleanup Pipeline (Gemini or Local Engine)
+  try {
+    const cleanupResult = await runAiCleanupPipeline(rawText);
 
+    const newProcessedText: ProcessedText = {
+      id: 'proc-' + Date.now(),
+      task_id: id,
+      transcription_id: newTranscription.id,
+      clean_text: cleanupResult.cleanText,
+      changes_summary: cleanupResult.changesSummary,
+      hallucination_checked: cleanupResult.hallucinationChecked,
+      created_at: new Date().toISOString()
+    };
+    db.processedTexts.push(newProcessedText);
+    task.processed_text = newProcessedText;
 
-  const newProcessedText: ProcessedText = {
-    id: 'proc-' + Date.now(),
-    task_id: taskId,
-    transcription_id: newTranscription.id,
-    clean_text: cleanupResult.cleanText,
-    changes_summary: cleanupResult.changesSummary,
-    hallucination_checked: cleanupResult.hallucinationChecked,
-    created_at: new Date().toISOString()
-  };
-  db.processedTexts.push(newProcessedText);
-  task.processed_text = newProcessedText;
+    // Run AI Translation Pipeline for English & Thai
+    const translationEn = await runAiTranslationPipeline(newProcessedText.clean_text, 'en');
+    const translationTh = await runAiTranslationPipeline(newProcessedText.clean_text, 'th');
 
-  // 3. Run AI Translation Pipeline for English (working language for assistants) & Thai
-  const translationEn = await runAiTranslationPipeline(newProcessedText.clean_text, 'en');
-  const translationTh = await runAiTranslationPipeline(newProcessedText.clean_text, 'th');
+    const newTranslationEn: Translation = {
+      id: 'trans-en-' + Date.now(),
+      task_id: id,
+      processed_text_id: newProcessedText.id,
+      target_language: 'en',
+      translated_text: translationEn.translatedText,
+      model: translationEn.model,
+      created_at: new Date().toISOString()
+    };
 
-  const newTranslationEn: Translation = {
-    id: 'trans-en-' + Date.now(),
-    task_id: taskId,
-    processed_text_id: newProcessedText.id,
-    target_language: 'en',
-    translated_text: translationEn.translatedText,
-    model: translationEn.model,
-    created_at: new Date().toISOString()
-  };
+    const newTranslationTh: Translation = {
+      id: 'trans-th-' + Date.now(),
+      task_id: id,
+      processed_text_id: newProcessedText.id,
+      target_language: 'th',
+      translated_text: translationTh.translatedText,
+      model: translationTh.model,
+      created_at: new Date().toISOString()
+    };
 
-  const newTranslationTh: Translation = {
-    id: 'trans-th-' + Date.now(),
-    task_id: taskId,
-    processed_text_id: newProcessedText.id,
-    target_language: 'th',
-    translated_text: translationTh.translatedText,
-    model: translationTh.model,
-    created_at: new Date().toISOString()
-  };
+    if (!db.translations) db.translations = [];
+    db.translations.push(newTranslationEn, newTranslationTh);
 
-  if (!db.translations) db.translations = [];
-  db.translations.push(newTranslationEn, newTranslationTh);
+    task.translations = [newTranslationEn, newTranslationTh];
 
-  if (!task.translations) task.translations = [];
-  task.translations.push(newTranslationEn, newTranslationTh);
+    // Transition to review
+    transitionTaskStatus(task, 'review', 'vps_ai_pipeline', 'AI Постобработка и перевод завершены. Ожидание подтверждения.');
+    saveDb();
 
-  // Transition to 'review' or 'completed'
-  transitionTaskStatus(task, 'review', 'vps_ai_pipeline', 'AI Постобработка и перевод завершены. Ожидание финального подтверждения.');
-  saveDb();
-
-  // Update UI task state
-  const uiTask = tasks.find(t => t.id === taskId);
-  if (uiTask) {
+    // Update UI task state
     uiTask.status = 'review';
-    uiTask.voiceMessage.originalTranscript = newTranscription.raw_text;
+    uiTask.voiceMessage.originalTranscript = rawText;
     uiTask.voiceMessage.translationRu = newProcessedText.clean_text;
     uiTask.voiceMessage.translationEn = translationEn.translatedText;
     uiTask.voiceMessage.translationTh = translationTh.translatedText;
-    uiTask.transcription = newTranscription;
     uiTask.processedText = newProcessedText;
     uiTask.translations = [newTranslationEn, newTranslationTh];
+
+    writeServerLog('INFO', 'vps_ai_pipeline', `Завершен AI Pipeline для задачи #${id}: Очищенный текст и Переводы EN/TH сохранены`, { taskId: id }, 'AI_PIPELINE_COMPLETE');
+
+    return {
+      success: true,
+      taskId: id,
+      transcription: newTranscription,
+      processedText: newProcessedText,
+      translations: [newTranslationEn, newTranslationTh],
+      status: 'review'
+    };
+  } catch (err: any) {
+    console.error('Pipeline Processing Error:', err);
+    const errMsg = `Ошибка постобработки CRM: ${err.message}`;
+    writeServerLog('ERROR', 'vps_ai_pipeline', errMsg, { taskId: id }, 'CRM_PIPELINE_FAILED');
+    transitionTaskStatus(task, 'failed', 'vps_ai_pipeline', errMsg);
+    saveDb();
+    throw new Error(errMsg);
+  }
+}
+
+app.post('/api/openrouter/transcribe', async (req, res) => {
+  const { taskId, simulateLatency } = req.body;
+  const isLatencyEnabled = simulateLatency || req.headers['x-simulate-latency'] === 'true';
+  if (!taskId) {
+    return res.status(400).json({ error: 'MISSING_TASK_ID', message: 'Поле taskId обязательно' });
   }
 
-  writeServerLog('INFO', 'vps_ai_pipeline', `Завершен AI Pipeline для задачи #${taskId}: Очищенный текст и Переводы EN/TH (${newTranslationEn.model}) сохранены`, { taskId, model: newTranslationEn.model }, 'AI_PIPELINE_COMPLETE');
+  try {
+    writeServerLog('INFO', 'openrouter_transcribe_api', `Получен запрос на транскрибацию через отдельный API для задачи #${taskId}. Добавление в очередь. Имитация задержки: ${isLatencyEnabled ? 'Да' : 'Нет'}`);
+    const result = await transcriptionQueue.enqueue(taskId, async () => {
+      if (isLatencyEnabled) {
+        writeServerLog('INFO', 'openrouter_transcribe_api', `[Имитация задержки] Задача #${taskId} задерживается в очереди на 2500мс...`);
+        await new Promise(resolve => setTimeout(resolve, 2500));
+      }
+      return performOpenRouterTranscription(taskId);
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: 'TRANSCRIPTION_QUEUED_FAILED', message: err.message });
+  }
+});
 
-  return res.json({
-    success: true,
-    taskId,
-    transcription: newTranscription,
-    processedText: newProcessedText,
-    translation: newTranslationEn,
-    translations: [newTranslationEn, newTranslationTh],
-    status: 'review'
-  });
+app.post('/api/tasks/:id/transcribe', async (req, res) => {
+  const { id } = req.params;
+  try {
+    writeServerLog('INFO', 'openrouter_transcribe_legacy_api', `Получен запрос на транскрибацию для задачи #${id}. Добавление в очередь.`);
+    const result = await transcriptionQueue.enqueue(id, () => performOpenRouterTranscription(id));
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: 'TRANSCRIPTION_QUEUED_FAILED', message: err.message });
+  }
 });
 
 // Auth Endpoints
@@ -1429,20 +1471,7 @@ app.post('/api/assistant/activation-code', (req: AuthRequest, res) => {
 });
 
 app.post('/api/assistant/verify-code', (req, res) => {
-  const { code, workerUrl, telegramId } = req.body;
-  const db = getDb();
-
-  const foundCode = db.activationCodes.find(c => c.code === code && !c.used);
-  if (!foundCode) {
-    return res.status(400).json({ error: 'INVALID_CODE', message: 'Неверный или уже использованный код активации' });
-  }
-
-  foundCode.used = true;
-  saveDb();
-
-  writeServerLog('INFO', 'mac_worker', `Код активации ${code} успешно использован для привязки Mac Worker (TG: ${telegramId})`, { workerUrl }, 'VERIFY_ACTIVATION_CODE');
-
-  res.json({ success: true, message: 'Mac Worker успешно привязан по коду активации', assistantId: foundCode.assistantId });
+  return res.json({ status: "frozen", message: "Mac worker is disabled. OpenRouter is active." });
 });
 
 // Telegram Bot Voice Intake
@@ -1930,137 +1959,9 @@ app.get('/api/settings', (req, res) => {
   const db = getDb();
   res.json({
     success: true,
-    settings: assistantSettings,
-    slots,
     workerDevices: db.workerDevices,
     dbState: { users: db.users, profiles: db.assistantProfiles }
   });
-});
-
-app.post('/api/settings', (req, res) => {
-  const { assistant1, assistant2 } = req.body;
-  if (assistant1) assistantSettings.assistant1 = { ...assistantSettings.assistant1, ...assistant1 };
-  if (assistant2) assistantSettings.assistant2 = { ...assistantSettings.assistant2, ...assistant2 };
-
-  macContainers['1002'].assistantName = assistantSettings.assistant1.name;
-  macContainers['1002'].endpoint = assistantSettings.assistant1.workerUrl;
-  macContainers['1003'].assistantName = assistantSettings.assistant2.name;
-  macContainers['1003'].endpoint = assistantSettings.assistant2.workerUrl;
-
-  const logMsg = 'Администратор обновил настройки ассистентов и URL воркеров (Cloudflare Tunnel)';
-  writeServerLog('INFO', 'admin', logMsg, { assistantSettings }, 'UPDATE_SETTINGS');
-
-  res.json({ success: true, settings: assistantSettings, slots });
-});
-
-// Slot Management API: Worker Registration
-app.post('/api/register-worker', (req, res) => {
-  const { name, telegram_id, worker_url } = req.body;
-
-  if (!telegram_id) {
-    return res.status(400).json({ error: 'MISSING_TELEGRAM_ID', message: 'telegram_id обязателен' });
-  }
-
-  if (slots.assistant1?.telegram_id === telegram_id) {
-    slots.assistant1.worker_url = worker_url || slots.assistant1.worker_url;
-    if (name) slots.assistant1.name = name;
-
-    assistantSettings.assistant1.name = slots.assistant1.name;
-    assistantSettings.assistant1.chatId = `@${telegram_id}`;
-    assistantSettings.assistant1.workerUrl = slots.assistant1.worker_url;
-    macContainers['1002'].assistantName = slots.assistant1.name;
-    macContainers['1002'].endpoint = slots.assistant1.worker_url;
-    macContainers['1002'].isOnline = true;
-
-    const logMsg = `Повторное подключение Mac Worker (Слот 1): ${slots.assistant1.name} (TG: ${telegram_id})`;
-    writeServerLog('INFO', 'mac_worker', logMsg, { worker_url }, 'REGISTER_WORKER');
-
-    return res.json({ status: 'success', slot: 1, message: `Добро пожаловать снова, ${slots.assistant1.name}!` });
-  }
-
-  if (slots.assistant2?.telegram_id === telegram_id) {
-    slots.assistant2.worker_url = worker_url || slots.assistant2.worker_url;
-    if (name) slots.assistant2.name = name;
-
-    assistantSettings.assistant2.name = slots.assistant2.name;
-    assistantSettings.assistant2.chatId = `@${telegram_id}`;
-    assistantSettings.assistant2.workerUrl = slots.assistant2.worker_url;
-    macContainers['1003'].assistantName = slots.assistant2.name;
-    macContainers['1003'].endpoint = slots.assistant2.worker_url;
-    macContainers['1003'].isOnline = true;
-
-    const logMsg = `Повторное подключение Mac Worker (Слот 2): ${slots.assistant2.name} (TG: ${telegram_id})`;
-    writeServerLog('INFO', 'mac_worker', logMsg, { worker_url }, 'REGISTER_WORKER');
-
-    return res.json({ status: 'success', slot: 2, message: `Добро пожаловать снова, ${slots.assistant2.name}!` });
-  }
-
-  if (!slots.assistant1 || !slots.assistant1.telegram_id) {
-    slots.assistant1 = { name: name || 'Ассистент 1', telegram_id, worker_url: worker_url || 'http://localhost:8000', active: true };
-
-    assistantSettings.assistant1.name = slots.assistant1.name;
-    assistantSettings.assistant1.chatId = `@${telegram_id}`;
-    assistantSettings.assistant1.workerUrl = slots.assistant1.worker_url;
-    macContainers['1002'].assistantName = slots.assistant1.name;
-    macContainers['1002'].endpoint = slots.assistant1.worker_url;
-    macContainers['1002'].isOnline = true;
-
-    const logMsg = `Успешная регистрация в Слот 1: ${slots.assistant1.name} (TG: ${telegram_id})`;
-    writeServerLog('INFO', 'mac_worker', logMsg, { worker_url }, 'REGISTER_WORKER');
-
-    return res.json({ status: 'success', slot: 1, message: 'Вы успешно зарегистрированы как Ассистент 1' });
-  }
-
-  if (!slots.assistant2 || !slots.assistant2.telegram_id) {
-    slots.assistant2 = { name: name || 'Ассистент 2', telegram_id, worker_url: worker_url || 'http://localhost:8001', active: true };
-
-    assistantSettings.assistant2.name = slots.assistant2.name;
-    assistantSettings.assistant2.chatId = `@${telegram_id}`;
-    assistantSettings.assistant2.workerUrl = slots.assistant2.worker_url;
-    macContainers['1003'].assistantName = slots.assistant2.name;
-    macContainers['1003'].endpoint = slots.assistant2.worker_url;
-    macContainers['1003'].isOnline = true;
-
-    const logMsg = `Успешная регистрация в Слот 2: ${slots.assistant2.name} (TG: ${telegram_id})`;
-    writeServerLog('INFO', 'mac_worker', logMsg, { worker_url }, 'REGISTER_WORKER');
-
-    return res.json({ status: 'success', slot: 2, message: 'Вы успешно зарегистрированы как Ассистент 2' });
-  }
-
-  const logMsg = `Отказ в регистрации для TG ${telegram_id}: Все слоты (2/2) уже заняты`;
-  writeServerLog('WARN', 'mac_worker', logMsg, { name, telegram_id }, 'REGISTER_WORKER_DENIED');
-
-  return res.status(403).json({
-    error: 'SLOTS_FULL',
-    message: 'Лимит ассистентов (2/2) исчерпан. Доступ запрещен. Обратитесь к Администратору.'
-  });
-});
-
-app.post('/api/slots/reset', (req, res) => {
-  const { slot } = req.body;
-  if (slot === 1) {
-    slots.assistant1 = null;
-    assistantSettings.assistant1 = { name: 'Свободный слот 1', chatId: '', workerUrl: '' };
-    macContainers['1002'].assistantName = 'Слот 1 (Свободен)';
-    macContainers['1002'].isOnline = false;
-
-    const logMsg = 'Администратор сбросил доступ для Слота 1';
-    writeServerLog('INFO', 'admin', logMsg, undefined, 'RESET_SLOT_1');
-
-    return res.json({ success: true, message: 'Слот 1 успешно сброшен', slots });
-  } else if (slot === 2) {
-    slots.assistant2 = null;
-    assistantSettings.assistant2 = { name: 'Свободный слот 2', chatId: '', workerUrl: '' };
-    macContainers['1003'].assistantName = 'Слот 2 (Свободен)';
-    macContainers['1003'].isOnline = false;
-
-    const logMsg = 'Администратор сбросил доступ для Слота 2';
-    writeServerLog('INFO', 'admin', logMsg, undefined, 'RESET_SLOT_2');
-
-    return res.json({ success: true, message: 'Слот 2 успешно сброшен', slots });
-  }
-
-  return res.status(400).json({ error: 'INVALID_SLOT', message: 'Неверный номер слота' });
 });
 
 // System First-Run Onboarding & Health Status Endpoints
@@ -2290,6 +2191,76 @@ app.post('/api/tasks', upload.single('audio'), async (req, res) => {
   }
 });
 
+app.post('/api/tasks/mass-create-test', async (req, res) => {
+  try {
+    const db = getDb();
+    const createdIds: string[] = [];
+    const titles = [
+      'Стресс-тест #1: Заказ катера в Каннах',
+      'Стресс-тест #2: Бронирование Negresco в Ницце',
+      'Стресс-тест #3: Вертолетный трансфер из Монако'
+    ];
+
+    for (let i = 0; i < 3; i++) {
+      const taskId = 'task-test-' + Date.now() + '-' + i;
+      createdIds.push(taskId);
+
+      const dbTask: DbTask = {
+        id: taskId,
+        created_by: '1001',
+        status: 'available',
+        source_language: 'ru',
+        target_language: 'th',
+        created_at: new Date().toISOString(),
+        title: titles[i]
+      };
+      db.tasks.unshift(dbTask);
+
+      const initialPart: DbTaskAudioPart = {
+        id: 'part-' + Date.now() + '-' + i,
+        task_id: taskId,
+        file_path: `/api/audio/stress-test-${i + 1}.mp3`,
+        sequence_number: 1,
+        duration: 45,
+        created_at: new Date().toISOString()
+      };
+      db.taskAudioParts.push(initialPart);
+
+      const newTask: Task = {
+        id: taskId,
+        bossId: '1001',
+        title: titles[i],
+        voiceMessage: {
+          id: 'voice-' + Date.now() + '-' + i,
+          audioUrl: initialPart.file_path,
+          durationSeconds: 45,
+          createdAt: new Date().toISOString(),
+          translationEn: `Simulated high-load prompt for testing sequential queue #${i + 1}`,
+          translationTh: `ข้อความจำลองความสามารถในการทำงานลำดับที่ #${i + 1}`,
+          summaryTh: `สรุป: จำลองภารกิจ #${i + 1}`
+        },
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        questions: [],
+        audioPartsCount: 1
+      };
+
+      tasks.unshift(newTask);
+    }
+
+    saveDb();
+    writeServerLog('INFO', 'admin', `Сгенерировано 3 тестовых задачи для проверки FIFO очереди: ${createdIds.join(', ')}`, {}, 'MASS_CREATE_TEST_TASKS');
+
+    return res.status(201).json({
+      success: true,
+      taskIds: createdIds,
+      message: 'Успешно создано 3 тестовых задания для стресс-теста очереди'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Questions & Answers Endpoints
 app.post('/api/tasks/:id/question', (req: AuthRequest, res) => {
   const { id } = req.params;
@@ -2438,7 +2409,7 @@ app.post('/api/tasks/:id/complete', (req: AuthRequest, res) => {
 
 app.get('/api/containers', (req, res) => {
   const db = getDb();
-  res.json({ containers: macContainers, workerDevices: db.workerDevices });
+  res.json({ containers: {}, workerDevices: db.workerDevices });
 });
 
 app.get('/api/logs', (req, res) => {

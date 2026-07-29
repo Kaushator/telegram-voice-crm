@@ -70,9 +70,6 @@ export const SystemAiAdminControl: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Toggle Advanced Workers Panel
-  const [showWorkersSection, setShowWorkersSection] = useState(false);
-
   const fetchHealthLogs = () => {
     fetch('/api/system/health-logs')
       .then((res) => res.json())
@@ -234,7 +231,7 @@ export const SystemAiAdminControl: React.FC = () => {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            Автоматическая инициализация. Бесшовная интеграция Telegram, OpenRouter и Mac WhisperX.
+            Автоматическая инициализация. Бесшовная интеграция Telegram и OpenRouter.
           </p>
         </div>
 
@@ -281,23 +278,6 @@ export const SystemAiAdminControl: React.FC = () => {
             M1: {model1} | M2: {model2}
           </div>
           <div className="text-[10px] text-slate-500">Ключ: {systemStatus?.openrouter.apiKeyMasked || 'sk-or-v1-...'}</div>
-        </div>
-
-        {/* Mac Workers Indicator */}
-        <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-purple-200 flex items-center gap-1.5">
-              <span>💻</span> Mac Worker / WhisperX
-            </span>
-            <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-bold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/50">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              Готов
-            </span>
-          </div>
-          <div className="text-[11px] font-mono text-purple-200">
-            Воркеров: {systemStatus?.macWorkers.workerCount || 2} | Синхро: {systemStatus?.macWorkers.syncInterval || 30}с
-          </div>
-          <div className="text-[10px] text-slate-500">Автораздача параметров включена</div>
         </div>
       </div>
 
@@ -575,32 +555,6 @@ export const SystemAiAdminControl: React.FC = () => {
         )}
       </div>
 
-      {/* MAC WORKERS QUICK SYNC & ONE-LINER */}
-      <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
-        <div className="flex items-center justify-between cursor-pointer" onClick={() => setShowWorkersSection(!showWorkersSection)}>
-          <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
-            <span>💻</span> Авто-раздача воркерам (WhisperX / Mac M-Series)
-          </span>
-          <span className="text-[11px] text-sky-400 underline">
-            {showWorkersSection ? 'Свернуть' : 'Команда для запускa'}
-          </span>
-        </div>
-
-        {showWorkersSection && (
-          <div className="space-y-2 pt-2 border-t border-slate-800 text-xs text-slate-300">
-            <p className="text-[11px] text-slate-400">
-              Однострочник для запуска локального воркера на Mac M1/M2/M3/M4 (автоматически подтягивает параметры):
-            </p>
-            <div className="bg-black p-2.5 rounded-lg font-mono text-[11px] text-emerald-400 border border-slate-800 overflow-x-auto">
-              curl -sSL https://gardens-crm.ai/install-worker.sh | bash -s -- --sync-interval=30
-            </div>
-            <div className="flex items-center gap-4 text-[11px] text-slate-400 pt-1">
-              <span>● Ассистент 1 (Анна) — Port 8000 (Готов)</span>
-              <span>● Ассистент 2 (Игорь) — Port 8001 (Готов)</span>
-            </div>
-          </div>
-        )}
-      </div>
     </div>
     </div>
   );

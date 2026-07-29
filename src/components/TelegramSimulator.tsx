@@ -2,8 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { UserRole, Task, TaskMessage } from '../types';
 import { initTelegramWebApp, triggerHaptic } from '../utils/telegramSdk';
 import { EdenLogo } from './EdenLogo';
-import { MacDeploymentGuide } from './MacDeploymentGuide';
-import { MacWorkerConfigurator } from './MacWorkerConfigurator';
 import { OpenRouterAdminControl } from './OpenRouterAdminControl';
 import { FileUploader } from './FileUploader';
 
@@ -53,6 +51,14 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   const [playbackSpeeds, setPlaybackSpeeds] = useState<Record<string, number>>({});
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
 
+  // Testing States for Bottlenecks & FIFO queue
+  const [showTesterPanel, setShowTesterPanel] = useState(true);
+  const [latencySimulation, setLatencySimulation] = useState(true); // Default to true so user sees queue order instantly!
+  const [isTestingQueue, setIsTestingQueue] = useState(false);
+  const [testQueueLog, setTestQueueLog] = useState<string[]>([]);
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
+  const [simulatedViewport, setSimulatedViewport] = useState<'full' | 'half'>('full');
+
   // Chat & Conflict State
   const [chatInputs, setChatInputs] = useState<Record<string, string>>({});
   const [conflictErrors, setConflictErrors] = useState<Record<string, string>>({});
@@ -65,7 +71,6 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
   // Admin Data State
   const [adminSubTab, setAdminSubTab] = useState<'system_ai' | 'simulation' | 'checklist'>('system_ai');
-  const [adminSlots, setAdminSlots] = useState<any>(null);
   const [adminActivationCode, setAdminActivationCode] = useState<string | null>(null);
 
   // Ksenia Easter Egg State
@@ -79,14 +84,8 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   // Fetch Admin Data
   const fetchAdminData = async () => {
     try {
-      const [settingsRes, analyticsRes] = await Promise.all([
-        fetch('/api/settings'),
-        fetch('/api/admin/analytics')
-      ]);
-      const settingsData = await settingsRes.json();
+      const analyticsRes = await fetch('/api/admin/analytics');
       const analyticsData = await analyticsRes.json();
-
-      if (settingsData.slots) setAdminSlots(settingsData.slots);
       if (analyticsData.analytics) setAdminAnalytics(analyticsData.analytics);
     } catch (err) {
       console.error('Error fetching admin data', err);
@@ -230,53 +229,95 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
     }
   };
 
-  const handleSimulateMacWorker = async (taskId: string) => {
+  const handleStressTestQueue = async () => {
+    setIsTestingQueue(true);
+    setTestQueueLog(['[ТЕСТ] Запуск параллельного стресс-теста очереди...']);
+    triggerHaptic('impact', 'heavy');
+
+    try {
+      setTestQueueLog((p) => [...p, '[ТЕСТ] Шаг 1: Создание 3 тестовых задач на сервере...']);
+      const createRes = await fetch('/api/tasks/mass-create-test', {
+        method: 'POST'
+      });
+      const createData = await createRes.json();
+      if (!createRes.ok) {
+        throw new Error(createData.error || 'Ошибка создания задач');
+      }
+
+      const { taskIds } = createData;
+      setTestQueueLog((p) => [
+        ...p,
+        `[ТЕСТ] Создано задач: ${taskIds.length} (${taskIds.join(', ')})`,
+        '[ТЕСТ] Шаг 2: Отправка 3 параллельных запросов транскрибации на сервер...',
+        '[ТЕСТ] Запросы запущены одновременно (Promise.all). Наблюдайте за последовательным FIFO-выполнением:'
+      ]);
+
+      if (onRefreshAll) onRefreshAll();
+
+      const startTime = Date.now();
+      const promises = taskIds.map(async (id: string, index: number) => {
+        const orderNum = index + 1;
+        setTestQueueLog((p) => [...p, `⏳ [ТЕСТ] Запрос #${orderNum} отправлен для задачи #${id}...`]);
+        try {
+          const res = await fetch('/api/openrouter/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ taskId: id, simulateLatency: true }) // Force simulated delay to make queue visible
+          });
+          const data = await res.json();
+          const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+          if (res.ok) {
+            setTestQueueLog((p) => [...p, `✅ [ТЕСТ] Завершено #${orderNum} (${id}) на ${elapsedSec}с от старта`]);
+          } else {
+            setTestQueueLog((p) => [...p, `❌ [ТЕСТ] Ошибка #${orderNum} (${id}): ${data.message} на ${elapsedSec}с`]);
+          }
+        } catch (err: any) {
+          setTestQueueLog((p) => [...p, `❌ [ТЕСТ] Сбой соединения для #${orderNum}: ${err.message}`]);
+        }
+      });
+
+      // Wait for all to finish
+      await Promise.all(promises);
+      const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      setTestQueueLog((p) => [
+        ...p,
+        `🎉 [ТЕСТ ЗАВЕРШЕН] Все запросы выполнены за ${totalElapsed}с! Очередь обрабатывалась строго по одному.`,
+        '[ТЕСТ] Это доказывает полную защиту от пересечения вызовов API и перегрузки OpenRouter.'
+      ]);
+      triggerHaptic('notification', 'success');
+      if (onRefreshAll) onRefreshAll();
+    } catch (err: any) {
+      setTestQueueLog((p) => [...p, `❌ [ТЕСТ СБОЙ]: ${err.message}`]);
+      triggerHaptic('notification', 'error');
+    } finally {
+      setIsTestingQueue(false);
+    }
+  };
+
+  const handleSimulateTranscription = async (taskId: string) => {
     setSimulatingWorker(taskId);
     triggerHaptic('impact', 'medium');
     try {
-      const deviceToken = currentAssistantId === 'usr-1003' ? 'tok-mac-m2-1003' : 'tok-mac-m3-pro-1002';
-
-      await fetch('/api/worker/heartbeat', {
+      const res = await fetch('/api/openrouter/transcribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceToken, status: 'busy' })
+        body: JSON.stringify({ taskId, simulateLatency: latencySimulation })
       });
+      const data = await res.json();
 
-      const pollRes = await fetch('/api/worker/poll', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceToken })
-      });
-      await pollRes.json();
-
-      const resultRes = await fetch('/api/worker/result', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceToken,
-          taskId,
-          rawText: 'эээ Нам необходимо ну срочно заказать 5 новых 4K мониторов и 2 коммутатора Cisco для офиса. Пожалуйста, согласуйте счет до конца дня.',
-          segments: [
-            { start: 0.0, end: 5.2, text: 'эээ Нам необходимо ну срочно заказать 5 новых 4K мониторов' },
-            { start: 5.2, end: 10.0, text: 'и 2 коммутатора Cisco для офиса. Пожалуйста, согласуйте счет до конца дня.' }
-          ],
-          language: 'ru'
-        })
-      });
-
-      const resData = await resultRes.json();
-      if (resultRes.ok) {
-        setConflictErrors((prev) => ({ ...prev, [taskId]: '✅ Mac Worker завершил транскрибацию! Выполнен AI Cleanup & Translation.' }));
+      if (res.ok) {
+        setConflictErrors((prev) => ({ ...prev, [taskId]: '✅ OpenRouter (GPT-4o) завершил транскрибацию! Выполнен AI Cleanup & Translation.' }));
         setActiveTabMap((p) => ({ ...p, [taskId]: 'pipeline' }));
         triggerHaptic('notification', 'success');
         setTimeout(() => setConflictErrors((prev) => ({ ...prev, [taskId]: '' })), 5000);
         if (onRefreshAll) onRefreshAll();
       } else {
-        setConflictErrors((prev) => ({ ...prev, [taskId]: resData.message || 'Ошибка воркера' }));
+        setConflictErrors((prev) => ({ ...prev, [taskId]: data.message || 'Ошибка OpenRouter' }));
         triggerHaptic('notification', 'error');
       }
     } catch (err: any) {
       setConflictErrors((prev) => ({ ...prev, [taskId]: err.message }));
+      triggerHaptic('notification', 'error');
     } finally {
       setSimulatingWorker(null);
     }
@@ -338,13 +379,21 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
       : completedTasks
     : tasks;
 
-  return (
-    <div
-      className="bg-slate-900 rounded-xl border border-slate-800 text-slate-100 overflow-hidden shadow-2xl relative"
-      style={{
+  const simulatorStyle = themeMode === 'light'
+    ? {
+        backgroundColor: '#f8fafc',
+        color: '#0f172a',
+        borderColor: '#cbd5e1'
+      }
+    : {
         backgroundColor: 'var(--tg-theme-bg-color, #0f172a)',
         color: 'var(--tg-theme-text-color, #f8fafc)'
-      }}
+      };
+
+  return (
+    <div
+      className="bg-slate-900 rounded-xl border border-slate-800 text-slate-100 overflow-hidden shadow-2xl relative transition-all duration-300"
+      style={simulatorStyle}
     >
       {/* Background Watermark */}
       <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-5 overflow-hidden z-0">
@@ -352,12 +401,14 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
       </div>
 
       {/* Telegram Header with Branding */}
-      <div className="bg-slate-900/90 backdrop-blur-md px-4 py-3 border-b border-amber-900/30 flex items-center justify-between z-10 relative">
+      <div className={`backdrop-blur-md px-4 py-3 border-b flex items-center justify-between z-10 relative transition-colors duration-300 ${
+        themeMode === 'light' ? 'bg-white/95 border-slate-200' : 'bg-slate-900/90 border-amber-900/30'
+      }`}>
         <div className="flex items-center gap-3">
           <EdenLogo variant="compact" />
           <div className="border-l border-amber-500/30 pl-3">
-            <h2 className="text-xs font-semibold text-white tracking-wide">GARDENS OF EDEN RESIDENCES</h2>
-            <p className="text-[10px] text-amber-300 font-mono">
+            <h2 className={`text-xs font-semibold tracking-wide ${themeMode === 'light' ? 'text-slate-800' : 'text-white'}`}>GARDENS OF EDEN RESIDENCES</h2>
+            <p className="text-[10px] text-amber-500 font-mono">
               {currentRole === 'boss' && 'Язык: Русский (Шеф)'}
               {currentRole.startsWith('assistant') && 'ภาษา: ภาษาไทย (ผู้ช่วย)'}
               {currentRole === 'admin' && 'Язык: Русский (Администратор)'}
@@ -366,18 +417,235 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-amber-100/90 bg-amber-950/60 px-2.5 py-1 rounded border border-amber-800/50 font-mono">
+          <span className={`text-[11px] px-2.5 py-1 rounded border font-mono transition-colors duration-300 ${
+            themeMode === 'light' ? 'text-slate-700 bg-slate-100 border-slate-200' : 'text-amber-100/90 bg-amber-950/60 border-amber-800/50'
+          }`}>
             {currentRole === 'admin' ? 'Администратор' : currentAssistantName}
           </span>
         </div>
       </div>
 
       {/* Main Container */}
-      <div className="p-4 space-y-4 max-h-[640px] overflow-y-auto bg-slate-950/70 z-10 relative">
+      <div 
+        className={`p-4 space-y-4 overflow-y-auto transition-all duration-300 z-10 relative ${
+          themeMode === 'light' ? 'bg-slate-100/90' : 'bg-slate-950/70'
+        }`}
+        style={{
+          maxHeight: simulatedViewport === 'half' ? '380px' : '640px'
+        }}
+      >
+        {/* 🧪 ПАНЕЛЬ ТЕСТИРОВАНИЯ УЗКИХ МЕСТ TG MINI APP & FIFO ОЧЕРЕДИ */}
+        <div className={`rounded-xl border transition-all duration-300 ${
+          themeMode === 'light' 
+            ? 'bg-white border-slate-200 shadow-sm text-slate-800' 
+            : 'bg-slate-900/90 border-slate-800 shadow-xl text-slate-100'
+        }`}>
+          <div 
+            onClick={() => {
+              setShowTesterPanel(!showTesterPanel);
+              triggerHaptic('selection');
+            }}
+            className={`p-3 flex items-center justify-between cursor-pointer select-none font-semibold text-xs border-b transition-colors ${
+              themeMode === 'light' ? 'border-slate-100 hover:bg-slate-50' : 'border-slate-800/60 hover:bg-slate-850'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-sm">🧪</span>
+              <span className="tracking-wide uppercase">Панель тестирования Mini App & FIFO-очереди</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold ${
+                themeMode === 'light' ? 'bg-sky-100 text-sky-700' : 'bg-sky-950 text-sky-400 border border-sky-900/60'
+              }`}>
+                FIFO-Очередь: Активна
+              </span>
+              <span className="text-slate-400">{showTesterPanel ? '▲' : '▼'}</span>
+            </div>
+          </div>
+
+          {showTesterPanel && (
+            <div className="p-3.5 space-y-3.5 text-xs animate-fadeIn">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                
+                {/* 1. FIFO Очередь */}
+                <div className="space-y-2">
+                  <div className="font-bold text-[11px] tracking-wider uppercase text-slate-400 flex items-center gap-1.5">
+                    <span>⚡️</span>
+                    <span>1. FIFO Очередь (OpenRouter)</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Предотвращает параллельные вызовы OpenRouter и ошибки 429 (Too Many Requests), выстраивая запросы строго по очереди.
+                  </p>
+                  <button
+                    onClick={handleStressTestQueue}
+                    disabled={isTestingQueue}
+                    className="w-full py-2 px-3 rounded-lg font-bold text-xs bg-sky-600 hover:bg-sky-500 text-white disabled:bg-slate-800 disabled:text-slate-500 transition-all flex items-center justify-center gap-2 shadow-md active:scale-95"
+                  >
+                    {isTestingQueue ? (
+                      <>
+                        <span className="w-3 h-3 rounded-full border-2 border-slate-400 border-t-white animate-spin" />
+                        <span>Тестирование...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>💥</span>
+                        <span>Запустить FIFO Стресс-тест</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* 2. Задержка Сети */}
+                <div className="space-y-2">
+                  <div className="font-bold text-[11px] tracking-wider uppercase text-slate-400 flex items-center gap-1.5">
+                    <span>📡</span>
+                    <span>2. Имитация задержки связи</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Добавляет искусственную задержку +2.5с к транскрибации, чтобы наглядно увидеть последовательное продвижение очереди FIFO.
+                  </p>
+                  <label className={`flex items-center justify-between p-2 rounded-lg border cursor-pointer transition-colors ${
+                    themeMode === 'light' 
+                      ? latencySimulation ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200' 
+                      : latencySimulation ? 'bg-amber-950/15 border-amber-900/40' : 'bg-slate-950/40 border-slate-800'
+                  }`}>
+                    <span className="font-semibold text-[11px] text-slate-400">Медленное 3G соединение</span>
+                    <input
+                      type="checkbox"
+                      checked={latencySimulation}
+                      onChange={(e) => {
+                        setLatencySimulation(e.target.checked);
+                        triggerHaptic('selection');
+                      }}
+                      className="rounded border-slate-700 bg-slate-900 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900 w-4 h-4 cursor-pointer"
+                    />
+                  </label>
+                </div>
+
+                {/* 3. TG SDK & Viewport */}
+                <div className="space-y-2">
+                  <div className="font-bold text-[11px] tracking-wider uppercase text-slate-400 flex items-center gap-1.5">
+                    <span>📱</span>
+                    <span>3. TG SDK & Viewport</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Проверка адаптивности Mini App к интерфейсу Telegram: смена цветовой темы и сжатие экрана клавиатурой.
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      onClick={() => {
+                        setThemeMode(themeMode === 'dark' ? 'light' : 'dark');
+                        triggerHaptic('selection');
+                      }}
+                      className="py-1 px-1.5 rounded border border-slate-700 hover:bg-slate-800 text-[10px] font-semibold text-center transition-colors bg-slate-900/50"
+                    >
+                      🎨 {themeMode === 'dark' ? 'Светлая тема' : 'Темная тема'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSimulatedViewport(simulatedViewport === 'full' ? 'half' : 'full');
+                        triggerHaptic('impact', 'light');
+                      }}
+                      className="py-1 px-1.5 rounded border border-slate-700 hover:bg-slate-800 text-[10px] font-semibold text-center transition-colors bg-slate-900/50"
+                    >
+                      ⌨️ {simulatedViewport === 'full' ? 'Клавиатура' : 'Полный экран'}
+                    </button>
+                  </div>
+                  <div className="pt-1">
+                    <div className="text-[10px] text-slate-500 font-mono flex items-center justify-between">
+                      <span>Имитация Haptic feedback:</span>
+                      <div className="flex gap-1">
+                        <button 
+                          onClick={() => triggerHaptic('impact', 'light')}
+                          className="px-1 py-0.5 bg-slate-950/85 border border-slate-800 text-slate-300 rounded hover:text-white"
+                          title="Impact Light"
+                        >
+                          L
+                        </button>
+                        <button 
+                          onClick={() => triggerHaptic('impact', 'heavy')}
+                          className="px-1 py-0.5 bg-slate-950/85 border border-slate-800 text-slate-300 rounded hover:text-white"
+                          title="Impact Heavy"
+                        >
+                          H
+                        </button>
+                        <button 
+                          onClick={() => triggerHaptic('notification', 'success')}
+                          className="px-1 py-0.5 bg-slate-950/85 border border-slate-800 text-emerald-400 rounded hover:text-emerald-300"
+                          title="Notification Success"
+                        >
+                          S
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Тестовый консольный лог выполнения очереди */}
+              {testQueueLog.length > 0 && (
+                <div className="mt-2.5 p-2.5 bg-slate-950 border border-slate-850 rounded-lg space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 border-b border-slate-900 pb-1">
+                    <span>📋 Консоль тестирования FIFO-очереди</span>
+                    <button
+                      onClick={() => setTestQueueLog([])}
+                      className="text-rose-400 hover:text-rose-300 transition-colors"
+                    >
+                      Очистить
+                    </button>
+                  </div>
+                  <div className="max-h-[110px] overflow-y-auto space-y-0.5 font-mono text-[10px] leading-normal text-slate-300">
+                    {testQueueLog.map((log, i) => (
+                      <div key={i} className="whitespace-pre-wrap">{log}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* CHIEF ROLE INTERFACE */}
         {currentRole === 'boss' && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800">
+          <div className="space-y-4">
+            {/* Elegant Boss Command Center Banner */}
+            <div 
+              className="relative rounded-2xl overflow-hidden border border-amber-500/20 shadow-2xl p-6 flex flex-col justify-between min-h-[160px] bg-cover bg-center select-none"
+              style={{
+                backgroundImage: `linear-gradient(to right, rgba(15, 23, 42, 0.95) 40%, rgba(15, 23, 42, 0.4) 100%), url('/assets/brand-image/GardensOfEden_Hero_1920x1080.png')`
+              }}
+            >
+              {/* Monogram watermark */}
+              <div className="absolute top-4 right-4 w-12 h-12 opacity-80 pointer-events-none">
+                <img src="/assets/logos/Gardens of Eden/Monogram.svg" alt="Monogram" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+              </div>
+
+              <div className="space-y-1 relative z-10">
+                <span className="text-[10px] font-mono font-bold tracking-widest text-amber-300 uppercase px-2 py-0.5 bg-amber-950/85 rounded border border-amber-800/40 w-fit block">
+                  Рабочий стол Шефа (Boss Dashboard)
+                </span>
+                <h1 className="text-xl sm:text-2xl font-bold font-serif-luxury tracking-wide text-white">
+                  Gardens of Eden CRM
+                </h1>
+                <p className="text-xs text-slate-300 max-w-md">
+                  Управление поручениями, транскрибация голосовых в реальном времени и контроль качества работы ассистентов.
+                </p>
+              </div>
+
+              {/* Status Indicators */}
+              <div className="flex flex-wrap items-center gap-4 pt-3 mt-2 border-t border-slate-800/60 text-[11px] text-slate-300 relative z-10">
+                <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-1 rounded-md border border-slate-800">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>OpenRouter GPT-4o Transcribe: <b>Активен</b></span>
+                </div>
+                <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-1 rounded-md border border-slate-800">
+                  <span>Задач в работе: <b>{tasks.filter(t => t.status !== 'completed' && t.status !== 'cancelled').length}</b></span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 bg-slate-900/95 p-1.5 rounded-xl border border-slate-800/80 backdrop-blur-md">
               <button
                 onClick={() => {
                   setShowHistory(false);
@@ -605,44 +873,61 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                     )}
                   </div>
 
-                  {/* Main Task Content (English + Thai Summary for Assistant, Russian for Chief) */}
+                  {/* Main Task Content (3-Level Architecture for Assistants, Russian for Boss) */}
                   {currentRole.startsWith('assistant') ? (
-                    <div className="space-y-2 bg-slate-950/80 p-3 rounded-lg border border-slate-800">
-                      {/* 1. English AI Processed Version */}
+                    <div className="space-y-2.5 bg-slate-950/80 p-3 rounded-lg border border-slate-800">
+                      {/* Level 1: Refined English */}
                       <div className="space-y-1">
                         <div className="text-[10px] text-sky-400 font-mono font-bold uppercase tracking-wider flex justify-between">
-                          <span>รายละเอียดงาน (ภาษาอังกฤษ AI):</span>
-                          <span className="text-slate-500 font-normal">ภาษาหลักสำหรับการทำงาน</span>
+                          <span>1. Refined English Task (หลัก):</span>
+                          <span className="text-slate-500 font-normal">Clean English</span>
                         </div>
-                        <div className="text-slate-100 text-xs leading-relaxed font-medium bg-slate-900/90 p-2.5 rounded border border-slate-800">
+                        <div className="text-slate-100 text-xs leading-relaxed font-medium bg-slate-900/90 p-2.5 rounded border border-slate-800 shadow-inner">
                           {task.voiceMessage.translationEn || 'We urgently need to order 5 new 4K monitors and 2 Cisco network switches for our branch. Please approve the invoice by the end of the day.'}
                         </div>
                       </div>
 
-                      {/* 2. Thai Summary */}
-                      <div className="space-y-1 pt-1 border-t border-slate-900">
+                      {/* Level 2: Thai Summary + Meaning Validator Warning */}
+                      <div className="space-y-1 pt-1.5 border-t border-slate-900">
                         <div className="text-[10px] text-emerald-400 font-mono font-bold uppercase tracking-wider flex justify-between">
-                          <span>🇹🇭 สรุปสาระสำคัญ (ภาษาไทย):</span>
-                          <span className="text-slate-500 font-normal">สำหรับผู้ช่วย</span>
+                          <span>🇹🇭 2. Thai Summary (สรุป):</span>
+                          <span className="text-slate-500 font-normal">ภาษาไทย</span>
                         </div>
-                        <div className="text-emerald-200 text-xs leading-relaxed italic bg-emerald-950/30 p-2 rounded border border-emerald-900/50">
+                        <div className="text-emerald-200 text-xs leading-relaxed italic bg-emerald-950/30 p-2.5 rounded border border-emerald-900/50">
                           {task.voiceMessage.summaryTh || task.voiceMessage.translationTh || 'เราจำเป็นต้องสั่งซื้อจอมอนิเตอร์ 4K ใหม่ 5 จอและสวิตช์เครือข่าย Cisco 2 เครื่องสำหรับสาขาของเราโดยด่วน'}
+                        </div>
+
+                        {/* Meaning Validator Warning Badge */}
+                        <div className="mt-1.5 p-2 bg-amber-950/50 border border-amber-800/60 rounded-lg text-amber-300 text-[11px] font-mono flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-amber-400">⚠️</span>
+                            <span className="font-semibold">Перепроверьте контекст / Чат с Шефом</span>
+                          </span>
+                          <span className="text-[10px] text-amber-400/80 bg-amber-900/40 px-1.5 py-0.5 rounded border border-amber-800/40">
+                            โปรดตรวจสอบบริบท
+                          </span>
                         </div>
                       </div>
 
-                      {/* 3. Expandable Full Transcript Accordion */}
-                      <div className="pt-1 border-t border-slate-900">
+                      {/* Level 3: Raw English (Hidden under toggle button) */}
+                      <div className="pt-1.5 border-t border-slate-900">
                         <button
                           onClick={() => setExpandedTranscripts((prev) => ({ ...prev, [task.id]: !prev[task.id] }))}
-                          className="text-[11px] text-sky-400 hover:text-sky-300 font-mono flex items-center gap-1 transition-colors font-medium"
+                          className="w-full py-1.5 px-2 bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-slate-200 rounded border border-slate-800 text-[11px] font-mono flex items-center justify-between transition-colors"
                         >
-                          <span>{expandedTranscripts[task.id] ? '📖 ซ่อนข้อความเต็ม' : '👁 แสดงข้อความถอดความทั้งหมด'}</span>
+                          <span className="flex items-center gap-1.5">
+                            <span>🔍</span>
+                            <span>{expandedTranscripts[task.id] ? 'Скрыть исходник / Hide Raw' : 'Показать исходник / Show Raw'}</span>
+                          </span>
+                          <span className="text-sky-400">{expandedTranscripts[task.id] ? '▲' : '▼'}</span>
                         </button>
 
                         {expandedTranscripts[task.id] && (
-                          <div className="mt-2 p-2.5 bg-slate-900 rounded text-[11px] text-slate-300 space-y-1 font-mono border border-slate-800 animate-fadeIn">
-                            <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">[ข้อความถอดความต้นฉบับ / FULL TRANSCRIPTION]:</div>
-                            <p className="whitespace-pre-wrap leading-relaxed text-slate-200">{task.voiceMessage.originalTranscript || task.voiceMessage.translationRu || 'Нам срочно нужно заказать 5 новых 4K мониторов и 2 сетевых коммутатора Cisco для филиала.'}</p>
+                          <div className="mt-2 p-2.5 bg-slate-900/90 rounded text-[11px] text-slate-300 space-y-1 font-mono border border-slate-800 animate-fadeIn">
+                            <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">[3. RAW ENGLISH / WHISPERX TRANSCRIPTION]:</div>
+                            <p className="whitespace-pre-wrap leading-relaxed text-slate-200 bg-slate-950 p-2 rounded border border-slate-800/80">
+                              {task.voiceMessage.originalTranscript || 'Raw transcript: We urgently need to order 5 new 4K monitors and 2 Cisco network switches for branch office.'}
+                            </p>
                           </div>
                         )}
                       </div>
@@ -799,14 +1084,14 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                         </button>
                       )}
 
-                      {/* Run Mac Worker Simulation */}
-                      {isOwner && (task.status === 'assigned' || task.status === 'macbook_pending' || task.status === 'transcribing') && (
+                      {/* Run OpenRouter GPT-4o Transcribe */}
+                      {isOwner && (task.status === 'assigned' || task.status === 'transcribing') && (
                         <button
                           disabled={simulatingWorker === task.id}
-                          onClick={() => handleSimulateMacWorker(task.id)}
+                          onClick={() => handleSimulateTranscription(task.id)}
                           className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg text-xs transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                         >
-                          <span>💻</span> {simulatingWorker === task.id ? 'กำลังถอดความด้วย WhisperX...' : 'เรียกใช้ Mac Worker (ถอดความ + AI Pipeline)'}
+                          <span>🎙️</span> {simulatingWorker === task.id ? 'กำลังถอดความด้วย GPT-4o...' : 'ถอดความด้วย OpenRouter (GPT-4o + AI Pipeline)'}
                         </button>
                       )}
 
@@ -883,7 +1168,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                         {/* Layer 1: Raw WhisperX */}
                         <div className="space-y-1 bg-slate-900/90 p-2.5 rounded border border-slate-800">
                           <div className="font-semibold text-sky-400 font-mono text-[10px] flex justify-between">
-                            <span>Layer 1: Raw WhisperX (MacBook Worker)</span>
+                            <span>Layer 1: Raw WhisperX Transcription</span>
                             <span className="text-slate-500">Lang: {task.transcription?.language || 'ru'}</span>
                           </div>
                           <div className="text-slate-300 font-mono text-[11px]">

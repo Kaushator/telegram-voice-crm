@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
-import { UserRole, Task, LogEntry, MacContainerState, TaskMessage } from './types';
+import { UserRole, Task, LogEntry, TaskMessage } from './types';
 import { RoleSelector } from './components/RoleSelector';
 import { TelegramSimulator } from './components/TelegramSimulator';
 import { AdminLogsDashboard } from './components/AdminLogsDashboard';
-import { MacContainerStatus } from './components/MacContainerStatus';
 import { FirstRunOnboardingWizard } from './components/FirstRunOnboardingWizard';
 import { initTelegramWebApp } from './utils/telegramSdk';
 
@@ -12,11 +11,11 @@ export default function App() {
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<UserRole | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'telegram' | 'docker'>('telegram');
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'telegram'>('telegram');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskMessages, setTaskMessages] = useState<Record<string, TaskMessage[]>>({});
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [containers, setContainers] = useState<Record<string, MacContainerState>>({});
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
 
@@ -74,17 +73,6 @@ export default function App() {
     }
   };
 
-  const fetchContainers = async () => {
-    if (activeTab !== 'docker') return;
-    try {
-      const res = await fetch('/api/containers');
-      const data = await res.json();
-      if (data.containers) setContainers(data.containers);
-    } catch (err) {
-      console.error('Error fetching containers', err);
-    }
-  };
-
   const authenticate = async () => {
     try {
       const tg = typeof window !== 'undefined' ? window?.Telegram?.WebApp : null;
@@ -103,6 +91,7 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           if (data && data.success && data.role) {
+            setCurrentUser(data.user || { name: data.name, telegram_id: data.telegram_id });
             let mappedRole: UserRole = 'boss';
             const rawRole = data.role;
             if (rawRole === 'admin') {
@@ -194,12 +183,10 @@ export default function App() {
     // Initial fetch when tab changes
     fetchTasks();
     fetchLogs();
-    fetchContainers();
     
     const interval = setInterval(() => {
       fetchTasks();
       fetchLogs();
-      fetchContainers();
     }, 3000);
     return () => clearInterval(interval);
   }, [activeTab, isInitializing]);
@@ -403,22 +390,31 @@ export default function App() {
             </div>
             
             <div className="space-y-2">
-              <h2 className="text-lg font-semibold text-white">Ожидание авторизации</h2>
-              <p className="text-sm text-slate-400">
-                Ваш аккаунт ожидает назначения роли администратором. Все рабочие роли сейчас заняты.
+              <h2 className="text-lg font-semibold text-white">Доступ на рассмотрении</h2>
+              <p className="text-sm text-slate-300">
+                Ваш аккаунт зарегистрирован. Ожидайте подтверждения доступа администратором.
               </p>
             </div>
 
-            <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden mt-4 relative">
-               <div className="absolute inset-0 bg-emerald-500/50 w-1/3 rounded-full animate-bounce-x shadow-[0_0_10px_rgba(16,185,129,0.5)]" style={{ animation: 'shimmer 2s infinite linear' }} />
+            {currentUser && (
+              <div className="w-full bg-slate-950/50 rounded-lg p-3 text-left border border-slate-800/50 space-y-1">
+                <div className="text-[10px] text-slate-500 font-mono uppercase">Ваши данные Telegram</div>
+                <div className="text-sm font-medium text-slate-200">{currentUser.first_name || currentUser.name || 'Без имени'}</div>
+                <div className="text-xs font-mono text-slate-400">ID: {currentUser.telegram_id || currentUser.id || '---'}</div>
+              </div>
+            )}
+
+            <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden mt-2 relative">
+               <div className="absolute inset-0 bg-emerald-500/50 w-1/3 rounded-full shadow-[0_0_10px_rgba(16,185,129,0.5)]" style={{ animation: 'shimmer 2s infinite linear' }} />
             </div>
           </div>
           
           <button
             onClick={authenticate}
-            className="px-6 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm transition-all shadow-lg shadow-emerald-500/20 border border-emerald-400/30 active:scale-95"
+            className="px-6 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm transition-all shadow-lg shadow-emerald-500/20 border border-emerald-400/30 active:scale-95 flex items-center gap-2"
           >
-            Проверить статус
+            <span>🔄</span>
+            <span>Проверить статус доступа</span>
           </button>
         </div>
         <style>{`
@@ -492,11 +488,12 @@ export default function App() {
             onRefreshLogs={fetchLogs}
             onDownloadLogs={handleDownloadLogs}
             onSwitchToCrm={() => setActiveTab('telegram')}
+            currentUser={currentUser}
+            onRoleChanged={(r) => {
+              setCurrentRole(r);
+              if (r !== 'admin') setActiveTab('telegram');
+            }}
           />
-        )}
-
-        {activeTab === 'docker' && currentRole === 'admin' && (
-          <MacContainerStatus containers={containers} />
         )}
       </main>
 

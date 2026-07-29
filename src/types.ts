@@ -257,6 +257,7 @@ export interface OpenRouterConfig {
   apiKey: string;
   model1Editor: string;
   model2Validator: string;
+  transcribeModel?: string;
   isEnabled: boolean;
   systemContext: {
     familyStructure: string;

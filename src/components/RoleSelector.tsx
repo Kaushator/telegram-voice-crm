@@ -5,8 +5,8 @@ import { EdenLogo } from './EdenLogo';
 interface RoleSelectorProps {
   currentRole: UserRole;
   onSelectRole: (role: UserRole) => void;
-  activeTab: 'dashboard' | 'telegram' | 'docker';
-  onSelectTab: (tab: 'dashboard' | 'telegram' | 'docker') => void;
+  activeTab: 'dashboard' | 'telegram';
+  onSelectTab: (tab: 'dashboard' | 'telegram') => void;
 }
 
 export const RoleSelector: React.FC<RoleSelectorProps> = ({
@@ -26,13 +26,13 @@ export const RoleSelector: React.FC<RoleSelectorProps> = ({
       role: 'assistant_1',
       title: 'Ассистент 1 (Анна)',
       subtitle: 'Обработка задач #1',
-      desc: 'Подтверждение активности MacBook, запуск WhisperX, прием задач',
+      desc: 'Прием задач Шефа, перевод и контроль качества',
     },
     {
       role: 'assistant_2',
       title: 'Ассистент 2 (Игорь)',
       subtitle: 'Обработка задач #2',
-      desc: 'Подтверждение активности MacBook, запуск WhisperX, прием задач',
+      desc: 'Прием задач Шефа, перевод и контроль качества',
     },
     {
       role: 'admin',
@@ -81,17 +81,6 @@ export const RoleSelector: React.FC<RoleSelectorProps> = ({
               }`}
             >
               Симулятор Telegram Бота
-            </button>
-            <button
-              id="tab-docker-btn"
-              onClick={() => onSelectTab('docker')}
-              className={`px-3 py-1.5 rounded transition-all ${
-                activeTab === 'docker'
-                  ? 'bg-amber-700/80 text-white font-semibold shadow'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              Контейнер MacBook (WhisperX)
             </button>
           </div>
         </div>

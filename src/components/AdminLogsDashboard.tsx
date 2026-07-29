@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LogEntry } from '../types';
-import { MacDeploymentGuide } from './MacDeploymentGuide';
-import { MacWorkerConfigurator } from './MacWorkerConfigurator';
+import { LogEntry, UserRole } from '../types';
 import { UserManagement } from './UserManagement';
 import { SystemAiAdminControl } from './SystemAiAdminControl';
 
@@ -10,6 +8,8 @@ interface AdminLogsDashboardProps {
   onRefreshLogs: () => void;
   onDownloadLogs: () => void;
   onSwitchToCrm?: () => void;
+  currentUser?: any;
+  onRoleChanged?: (role: UserRole) => void;
 }
 
 export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
@@ -17,89 +17,9 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
   onRefreshLogs,
   onDownloadLogs,
   onSwitchToCrm,
+  currentUser,
+  onRoleChanged,
 }) => {
-  const [chiefTgId, setChiefTgId] = useState('1001');
-  const [asst1Name, setAsst1Name] = useState('Ассистент 1 (Анна)');
-  const [asst1ChatId, setAsst1ChatId] = useState('1002');
-  const [asst1WorkerUrl, setAsst1WorkerUrl] = useState('http://localhost:8000');
-
-  const [asst2Name, setAsst2Name] = useState('Ассистент 2 (Игорь)');
-  const [asst2ChatId, setAsst2ChatId] = useState('1003');
-  const [asst2WorkerUrl, setAsst2WorkerUrl] = useState('http://localhost:8001');
-
-  const [slotsInfo, setSlotsInfo] = useState<any>(null);
-  const [saveStatus, setSaveStatus] = useState('');
-
-  const fetchSettings = () => {
-    fetch('/api/settings')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.settings) {
-          if (data.settings.assistant1) {
-            setAsst1Name(data.settings.assistant1.name || 'Ассистент 1 (Анна)');
-            setAsst1ChatId(data.settings.assistant1.chatId || '1002');
-            setAsst1WorkerUrl(data.settings.assistant1.workerUrl || 'http://localhost:8000');
-          }
-          if (data.settings.assistant2) {
-            setAsst2Name(data.settings.assistant2.name || 'Ассистент 2 (Игорь)');
-            setAsst2ChatId(data.settings.assistant2.chatId || '1003');
-            setAsst2WorkerUrl(data.settings.assistant2.workerUrl || 'http://localhost:8001');
-          }
-        }
-        if (data.slots) {
-          setSlotsInfo(data.slots);
-        }
-      })
-      .catch((err) => console.error('Error fetching settings', err));
-  };
-
-  useEffect(() => {
-    fetchSettings();
-  }, []);
-
-  const handleSaveSettings = async () => {
-    try {
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          assistant1: { name: asst1Name, chatId: asst1ChatId, workerUrl: asst1WorkerUrl },
-          assistant2: { name: asst2Name, chatId: asst2ChatId, workerUrl: asst2WorkerUrl },
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSaveStatus('Настройки успешно сохранены');
-        setTimeout(() => setSaveStatus(''), 3000);
-        fetchSettings();
-        onRefreshLogs();
-      }
-    } catch (err) {
-      console.error('Error saving settings', err);
-      setSaveStatus('Ошибка при сохранении настроек');
-    }
-  };
-
-  const handleResetSlot = async (slotNumber: number) => {
-    try {
-      const res = await fetch('/api/slots/reset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slot: slotNumber }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSaveStatus(`Слот ${slotNumber} успешно сброшен`);
-        setTimeout(() => setSaveStatus(''), 3000);
-        fetchSettings();
-        onRefreshLogs();
-      }
-    } catch (err) {
-      console.error('Error resetting slot', err);
-      setSaveStatus(`Ошибка при сбросе слота ${slotNumber}`);
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Top Banner with Switch to CRM Button */}
@@ -134,146 +54,22 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
       </div>
 
       {/* User Management Section */}
-      <UserManagement />
+      <UserManagement currentUser={currentUser} onRoleChanged={onRoleChanged} />
 
       {/* System AI Admin Control */}
       <SystemAiAdminControl />
 
-      {/* Mac Worker Configurator & File Generator */}
-      <MacWorkerConfigurator />
-
-      {/* Deployment Guide for Employee MacBooks */}
-      <MacDeploymentGuide />
-
-      {/* Settings & Slot Management Section */}
-      <div className="bg-slate-900 rounded-lg border border-slate-800 text-slate-100 p-4 shadow-lg space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <div>
-            <h2 className="text-sm font-semibold text-white">Управление Слотами и Настройки Ассистентов (MacBook M3)</h2>
-            <p className="text-[11px] text-slate-400">
-              Лимит 2 слотов. Администратор может изменять параметры или принудительно сбросить слот для привязки нового устройство.
-            </p>
-          </div>
-          <button
-            id="save-settings-btn"
-            onClick={handleSaveSettings}
-            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded transition-colors"
-          >
-            Сохранить настройки
-          </button>
-        </div>
-
-        {saveStatus && (
-          <div className="text-xs font-mono text-emerald-400 bg-emerald-950/60 p-2 rounded border border-emerald-800">
-            {saveStatus}
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-          {/* Assistant 1 Config & Slot Management */}
-          <div className="bg-slate-950 p-3 rounded border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-1">
-              <div className="font-semibold text-sky-400">
-                Слот 1: {slotsInfo?.assistant1 ? 'Занят' : 'Свободен'}
-              </div>
-              <button
-                id="reset-slot-1-btn"
-                onClick={() => handleResetSlot(1)}
-                className="px-2 py-0.5 bg-rose-700 hover:bg-rose-600 text-white text-[10px] rounded font-medium transition-colors"
-              >
-                Сбросить слот 1
-              </button>
-            </div>
-
-            <div>
-              <label className="block text-slate-400 text-[11px] mb-1">Имя Ассистента 1</label>
-              <input
-                type="text"
-                value={asst1Name}
-                onChange={(e) => setAsst1Name(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-sky-500"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-400 text-[11px] mb-1">Telegram ID (числовой)</label>
-              <input
-                type="text"
-                value={asst1ChatId}
-                onChange={(e) => setAsst1ChatId(e.target.value)}
-                placeholder="1002"
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-sky-500 font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-400 text-[11px] mb-1">
-                URL локального воркера / Cloudflare Tunnel
-              </label>
-              <input
-                type="text"
-                value={asst1WorkerUrl}
-                onChange={(e) => setAsst1WorkerUrl(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-sky-500 font-mono text-[11px]"
-              />
-            </div>
-          </div>
-
-          {/* Assistant 2 Config & Slot Management */}
-          <div className="bg-slate-950 p-3 rounded border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-1">
-              <div className="font-semibold text-sky-400">
-                Слот 2: {slotsInfo?.assistant2 ? 'Занят' : 'Свободен'}
-              </div>
-              <button
-                id="reset-slot-2-btn"
-                onClick={() => handleResetSlot(2)}
-                className="px-2 py-0.5 bg-rose-700 hover:bg-rose-600 text-white text-[10px] rounded font-medium transition-colors"
-              >
-                Сбросить слот 2
-              </button>
-            </div>
-
-            <div>
-              <label className="block text-slate-400 text-[11px] mb-1">Имя Ассистента 2</label>
-              <input
-                type="text"
-                value={asst2Name}
-                onChange={(e) => setAsst2Name(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-sky-500"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-400 text-[11px] mb-1">Telegram ID (числовой)</label>
-              <input
-                type="text"
-                value={asst2ChatId}
-                onChange={(e) => setAsst2ChatId(e.target.value)}
-                placeholder="1003"
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-sky-500 font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-400 text-[11px] mb-1">
-                URL локального воркера / Cloudflare Tunnel
-              </label>
-              <input
-                type="text"
-                value={asst2WorkerUrl}
-                onChange={(e) => setAsst2WorkerUrl(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-sky-500 font-mono text-[11px]"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* Logs Table Section */}
 
-      <div className="bg-slate-900 rounded-lg border border-slate-800 text-slate-100 overflow-hidden shadow-lg">
-        <div className="bg-slate-800 px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+      <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 rounded-2xl text-slate-100 overflow-hidden shadow-2xl relative">
+        {/* Ambient background light */}
+        <div className="absolute bottom-0 right-0 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="bg-slate-950/60 backdrop-blur-md px-6 py-4 border-b border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10">
           <div>
-            <h2 className="text-sm font-semibold text-white">Панель Администратора: Логи и Транскрибация</h2>
-            <p className="text-[11px] text-slate-400">
-              Сохранение событий в текстовые файлы сервера и синхронизация реального времени
+            <h2 className="text-base font-bold text-white font-serif-luxury tracking-wide">Панель Администратора: Логи и Транскрибация</h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Сохранение событий в текстовые файлы сервера и синхронизация в реальном времени
             </p>
           </div>
           <div className="flex items-center gap-2">
