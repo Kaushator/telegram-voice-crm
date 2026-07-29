@@ -1980,78 +1980,89 @@ app.get('/api/system/onboarding-status', (req, res) => {
 });
 
 app.post('/api/system/onboarding-setup', (req, res) => {
-  const {
-    telegramToken,
-    openRouterApiKey,
-    stage1Model,
-    stage2Model,
-    workerInternalSecret,
-    activeWorkerCount,
-    workers
-  } = req.body;
+  const setupData = req.body;
+  const telegramToken = setupData.telegramToken || setupData.telegram_bot_token;
+  const openRouterApiKey = setupData.openRouterApiKey || setupData.openrouter_api_key;
+  const stage1Model = setupData.stage1Model || setupData.stage1_model;
+  const stage2Model = setupData.stage2Model || setupData.stage2_model;
+  const workerInternalSecret = setupData.workerInternalSecret || setupData.worker_internal_secret;
+  const activeWorkerCount = setupData.activeWorkerCount || setupData.active_worker_count;
+  const workers = setupData.workers;
 
-  if (telegramToken) process.env.TELEGRAM_BOT_TOKEN = telegramToken;
-  if (openRouterApiKey) process.env.OPENROUTER_API_KEY = openRouterApiKey;
-  if (workerInternalSecret) process.env.WORKER_INTERNAL_SECRET = workerInternalSecret;
+  console.log('[Onboarding] Получены параметры первичной настройки:', {
+    hasBotToken: !!telegramToken,
+    hasOpenRouterKey: !!openRouterApiKey,
+    workersCount: workers?.length || activeWorkerCount || 1
+  });
 
-  const db = getDb();
+  try {
+    if (telegramToken) process.env.TELEGRAM_BOT_TOKEN = telegramToken;
+    if (openRouterApiKey) process.env.OPENROUTER_API_KEY = openRouterApiKey;
+    if (workerInternalSecret) process.env.WORKER_INTERNAL_SECRET = workerInternalSecret;
 
-  if (!db.openrouterConfig) {
-    db.openrouterConfig = {
-      apiKey: openRouterApiKey || '',
-      model1Editor: stage1Model || 'openai/gpt-5.6-sol',
-      model2Validator: stage2Model || 'openai/o3-mini',
-      isEnabled: true,
-      systemContext: {
-        familyStructure: process.env.FAMILY_LOGISTICS_CONTEXT || 'Шеф с женой, 3 детьми и нянями',
-        currentLocation: 'Заграничная поездка / Турне по Европе',
-        primaryTaskDomains: [
-          'VIP-логистика и трансферы по Европе',
-          'Аренда премиальных авто (Range Rover, Mercedes S-Class/V-Class)',
-          'Аренда частных яхт, катеров и вертолетов',
-          'Бронирование 5-звездочных отелей, вилл и резортов',
-          'Координация распорядка семьи, детей и нянь'
-        ],
-        instructions: [
-          'Сохранять 100% точность чисел, дат, географических названий, марок автомобилей и финансовых сумм',
-          'Категорический запрет на домысливание или галлюцинирование несуществующих деталей',
-          'В случае неоднозначности текста — обязательно явно выделить её примечанием [Примечание к записи: ...], не выдумывая подробностей'
-        ]
-      },
-      updatedAt: new Date().toISOString()
+    const db = getDb();
+
+    if (!db.openrouterConfig) {
+      db.openrouterConfig = {
+        apiKey: openRouterApiKey || '',
+        model1Editor: stage1Model || 'openai/gpt-5.6-sol',
+        model2Validator: stage2Model || 'openai/o3-mini',
+        isEnabled: true,
+        systemContext: {
+          familyStructure: process.env.FAMILY_LOGISTICS_CONTEXT || 'Шеф с женой, 3 детьми и нянями',
+          currentLocation: 'Заграничная поездка / Турне по Европе',
+          primaryTaskDomains: [
+            'VIP-логистика и трансферы по Европе',
+            'Аренда премиальных авто (Range Rover, Mercedes S-Class/V-Class)',
+            'Аренда частных яхт, катеров и вертолетов',
+            'Бронирование 5-звездочных отелей, вилл и резортов',
+            'Координация распорядка семьи, детей и нянь'
+          ],
+          instructions: [
+            'Сохранять 100% точность чисел, дат, географических названий, марок автомобилей и финансовых сумм',
+            'Категорический запрет на домысливание или галлюцинирование несуществующих деталей',
+            'В случае неоднозначности текста — обязательно явно выделить её примечанием [Примечание к записи: ...], не выдумывая подробностей'
+          ]
+        },
+        updatedAt: new Date().toISOString()
+      };
+    } else {
+      if (openRouterApiKey) db.openrouterConfig.apiKey = openRouterApiKey;
+      if (stage1Model) db.openrouterConfig.model1Editor = stage1Model;
+      if (stage2Model) db.openrouterConfig.model2Validator = stage2Model;
+      db.openrouterConfig.isEnabled = true;
+      db.openrouterConfig.updatedAt = new Date().toISOString();
+    }
+
+    const count = activeWorkerCount || 2;
+    const workerList = workers && workers.length > 0 ? workers : defaultMacWorkerSettings.workers;
+
+    db.macWorkerSettings = {
+      activeWorkerCount: count,
+      workers: workerList
     };
-  } else {
-    if (openRouterApiKey) db.openrouterConfig.apiKey = openRouterApiKey;
-    if (stage1Model) db.openrouterConfig.model1Editor = stage1Model;
-    if (stage2Model) db.openrouterConfig.model2Validator = stage2Model;
-    db.openrouterConfig.isEnabled = true;
-    db.openrouterConfig.updatedAt = new Date().toISOString();
+
+    db.onboardingCompleted = true;
+    saveDb();
+
+    logConfigHealth('INFO', 'CONFIG_LOAD', 'Завершена первичная настройка CRM (First-Run Onboarding Wizard)', {
+      activeWorkerCount: count,
+      stage1Model,
+      stage2Model
+    });
+
+    writeServerLog('INFO', 'admin', 'Инициализирована и активирована CRM конфигурация', { activeWorkerCount: count }, 'ONBOARDING_COMPLETED');
+
+    res.json({
+      success: true,
+      status: 'success',
+      message: 'Onboarding configuration saved successfully',
+      onboardingCompleted: true
+    });
+  } catch (error: any) {
+    console.error('[Onboarding Error]:', error);
+    res.status(500).json({ error: 'Failed to save configuration' });
   }
-
-  const count = activeWorkerCount || 2;
-  const workerList = workers && workers.length > 0 ? workers : defaultMacWorkerSettings.workers;
-
-  db.macWorkerSettings = {
-    activeWorkerCount: count,
-    workers: workerList
-  };
-
-  db.onboardingCompleted = true;
-  saveDb();
-
-  logConfigHealth('INFO', 'CONFIG_LOAD', 'Завершена первичная настройка CRM (First-Run Onboarding Wizard)', {
-    activeWorkerCount: count,
-    stage1Model,
-    stage2Model
-  });
-
-  writeServerLog('INFO', 'admin', 'Инициализирована и активирована CRM конфигурация', { activeWorkerCount: count }, 'ONBOARDING_COMPLETED');
-
-  res.json({
-    success: true,
-    message: 'CRM успешно инициализирована! Все параметры применены.',
-    onboardingCompleted: true
-  });
 });
 
 
