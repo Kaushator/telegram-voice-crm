@@ -322,7 +322,13 @@ export default function App() {
 
   if (isInitializing) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-b from-slate-950 via-slate-900 to-black text-white overflow-hidden">
+      <div 
+        className="fixed inset-0 z-50 flex flex-col items-center justify-center text-white overflow-hidden bg-cover bg-center"
+        style={{
+          backgroundImage: `linear-gradient(to bottom, rgba(10, 14, 23, 0.88), rgba(10, 14, 23, 0.96)), url('/eden_bg.jpg')`,
+          backgroundColor: '#0a0e17'
+        }}
+      >
         {/* Ambient CSS glow background elements */}
         <div className="absolute -top-32 -left-32 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -343,15 +349,15 @@ export default function App() {
               GARDENS OF EDEN
             </h1>
             <p className="text-xs sm:text-sm tracking-widest text-emerald-300 font-medium font-serif italic">
-              Luxury of Nature
+              Luxury of Nature / Voice CRM
             </p>
           </div>
 
           {/* Mandatory Splash Text */}
-          <div className="py-2 px-4 rounded-full bg-slate-900/80 border border-slate-700/60 shadow-inner flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            <span className="text-sm font-medium text-slate-200">
-              Welcome to CRM. Please wait for logging{dots}
+          <div className="py-2.5 px-5 rounded-full bg-slate-900/90 border border-slate-700/60 shadow-inner flex items-center space-x-2.5 backdrop-blur-md">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-xs sm:text-sm font-medium text-slate-200 font-mono">
+              Инициализация авторизации{dots}
             </span>
           </div>
 
@@ -369,7 +375,13 @@ export default function App() {
   
   if (currentRole === 'pending') {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-b from-slate-950 via-slate-900 to-black text-white overflow-hidden">
+      <div 
+        className="fixed inset-0 z-50 flex flex-col items-center justify-center text-white overflow-hidden bg-cover bg-center"
+        style={{
+          backgroundImage: `linear-gradient(to bottom, rgba(10, 14, 23, 0.88), rgba(10, 14, 23, 0.96)), url('/eden_bg.jpg')`,
+          backgroundColor: '#0a0e17'
+        }}
+      >
         {/* Ambient CSS glow background elements */}
         <div className="absolute -top-32 -left-32 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -381,7 +393,7 @@ export default function App() {
               GARDENS OF EDEN
             </h1>
             <p className="text-sm tracking-widest text-emerald-300 font-medium font-serif italic">
-              Luxury of Nature
+              Luxury of Nature / Voice CRM
             </p>
           </div>
 
