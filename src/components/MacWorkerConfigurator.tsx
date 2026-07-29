@@ -9,7 +9,7 @@ export const MacWorkerConfigurator: React.FC = () => {
 
   const [crmUrl, setCrmUrl] = useState(defaultCrmUrl);
   const [assistantName, setAssistantName] = useState('Ассистент 1 (Анна)');
-  const [telegramChatId, setTelegramChatId] = useState('@anna_asst_1002');
+  const [telegramChatId, setTelegramChatId] = useState('1002');
   const [chipModel, setChipModel] = useState('M3');
   const [whisperModel, setWhisperModel] = useState('large-v3');
   const [computeType, setComputeType] = useState('float16');
@@ -280,13 +280,13 @@ python "$WORKER_DIR/worker.py"
 
         <div className="space-y-1">
           <label className="text-[11px] font-semibold text-amber-200">
-            Telegram Chat ID
+            Telegram ID (числовой)
           </label>
           <input
             type="text"
             value={telegramChatId}
             onChange={(e) => setTelegramChatId(e.target.value)}
-            placeholder="@anna_asst_1002"
+            placeholder="1002"
             className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
           />
         </div>

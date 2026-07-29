@@ -14,12 +14,13 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
   onRefreshLogs,
   onDownloadLogs,
 }) => {
+  const [chiefTgId, setChiefTgId] = useState('1001');
   const [asst1Name, setAsst1Name] = useState('Ассистент 1 (Анна)');
-  const [asst1ChatId, setAsst1ChatId] = useState('@anna_asst');
+  const [asst1ChatId, setAsst1ChatId] = useState('1002');
   const [asst1WorkerUrl, setAsst1WorkerUrl] = useState('http://localhost:8000');
 
   const [asst2Name, setAsst2Name] = useState('Ассистент 2 (Игорь)');
-  const [asst2ChatId, setAsst2ChatId] = useState('@igor_asst');
+  const [asst2ChatId, setAsst2ChatId] = useState('1003');
   const [asst2WorkerUrl, setAsst2WorkerUrl] = useState('http://localhost:8001');
 
   const [slotsInfo, setSlotsInfo] = useState<any>(null);
@@ -32,12 +33,12 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
         if (data.settings) {
           if (data.settings.assistant1) {
             setAsst1Name(data.settings.assistant1.name || 'Ассистент 1 (Анна)');
-            setAsst1ChatId(data.settings.assistant1.chatId || '@anna_asst');
+            setAsst1ChatId(data.settings.assistant1.chatId || '1002');
             setAsst1WorkerUrl(data.settings.assistant1.workerUrl || 'http://localhost:8000');
           }
           if (data.settings.assistant2) {
             setAsst2Name(data.settings.assistant2.name || 'Ассистент 2 (Игорь)');
-            setAsst2ChatId(data.settings.assistant2.chatId || '@igor_asst');
+            setAsst2ChatId(data.settings.assistant2.chatId || '1003');
             setAsst2WorkerUrl(data.settings.assistant2.workerUrl || 'http://localhost:8001');
           }
         }
@@ -154,11 +155,12 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
               />
             </div>
             <div>
-              <label className="block text-slate-400 text-[11px] mb-1">Telegram Chat ID / Username</label>
+              <label className="block text-slate-400 text-[11px] mb-1">Telegram ID (числовой)</label>
               <input
                 type="text"
                 value={asst1ChatId}
                 onChange={(e) => setAsst1ChatId(e.target.value)}
+                placeholder="1002"
                 className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-sky-500 font-mono"
               />
             </div>
@@ -200,11 +202,12 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
               />
             </div>
             <div>
-              <label className="block text-slate-400 text-[11px] mb-1">Telegram Chat ID / Username</label>
+              <label className="block text-slate-400 text-[11px] mb-1">Telegram ID (числовой)</label>
               <input
                 type="text"
                 value={asst2ChatId}
                 onChange={(e) => setAsst2ChatId(e.target.value)}
+                placeholder="1003"
                 className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-sky-500 font-mono"
               />
             </div>

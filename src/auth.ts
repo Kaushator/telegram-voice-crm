@@ -115,10 +115,11 @@ export function telegramAuthMiddleware(req: any, res: any, next: any) {
 
   req.telegramUser = result.user;
   if (result.user) {
+    const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
     req.user = {
       userId: 'usr-' + result.user.id,
       telegramId: String(result.user.id),
-      role: result.user.username === 'chief' || result.user.id === 1001 ? 'chief' : 'assistant',
+      role: String(result.user.id) === String(chiefTgId) ? 'chief' : 'assistant',
       displayName: result.user.first_name || 'Пользователь'
     };
   }

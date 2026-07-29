@@ -23,11 +23,11 @@ export const FirstRunOnboardingWizard: React.FC<FirstRunOnboardingWizardProps> =
   const [activeWorkerCount, setActiveWorkerCount] = useState<number>(2);
 
   const [worker1Name, setWorker1Name] = useState('Ассистент 1 (Анна)');
-  const [worker1Telegram, setWorker1Telegram] = useState('@anna_asst_1002');
+  const [worker1Telegram, setWorker1Telegram] = useState('1002');
   const [worker1Url, setWorker1Url] = useState('http://localhost:8000');
 
   const [worker2Name, setWorker2Name] = useState('Ассистент 2 (Игорь)');
-  const [worker2Telegram, setWorker2Telegram] = useState('@igor_asst_1003');
+  const [worker2Telegram, setWorker2Telegram] = useState('1003');
   const [worker2Url, setWorker2Url] = useState('http://localhost:8001');
 
   const [showSecret, setShowSecret] = useState(false);

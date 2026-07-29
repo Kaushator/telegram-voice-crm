@@ -74,7 +74,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 const uploadDir = path.join(process.cwd(), 'uploads');
 const logsDir = path.join(process.cwd(), 'logs');
@@ -228,7 +229,8 @@ async function callOpenRouterModel(
   apiKey: string,
   model: string,
   systemPrompt: string,
-  userMessage: string
+  userMessage: string,
+  maxTokens: number = 8192
 ): Promise<string> {
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -244,6 +246,7 @@ async function callOpenRouterModel(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage }
       ],
+      max_tokens: maxTokens,
       response_format: { type: 'json_object' }
     })
   });
@@ -529,10 +532,11 @@ function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) 
   if (initDataHeader) {
     const valResult = validateTelegramInitData(initDataHeader);
     if (valResult.valid && valResult.user) {
+      const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
       req.user = {
         userId: 'usr-' + valResult.user.id,
         telegramId: String(valResult.user.id),
-        role: valResult.user.username === 'chief' || valResult.user.id === 1001 ? 'chief' : 'assistant',
+        role: String(valResult.user.id) === String(chiefTgId) ? 'chief' : 'assistant',
         displayName: valResult.user.first_name || 'Пользователь'
       };
       return next();
@@ -571,7 +575,8 @@ app.post('/api/auth/validate-init-data', (req: Request, res: Response) => {
     });
   }
 
-  const role: SystemUserRole = result.user.username === 'chief' || result.user.id === 1001 ? 'chief' : 'assistant';
+  const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
+  const role: SystemUserRole = String(result.user.id) === String(chiefTgId) ? 'chief' : 'assistant';
   const payload: JwtPayload = {
     userId: 'usr-' + result.user.id,
     telegramId: String(result.user.id),
@@ -601,12 +606,12 @@ let slots: {
 let assistantSettings = {
   assistant1: {
     name: 'Ассистент 1 (Анна)',
-    chatId: '@anna_asst',
+    chatId: '1002',
     workerUrl: 'http://localhost:8000',
   },
   assistant2: {
     name: 'Ассистент 2 (Игорь)',
-    chatId: '@igor_asst',
+    chatId: '1003',
     workerUrl: 'http://localhost:8001',
   }
 };
@@ -1202,10 +1207,11 @@ app.post('/api/auth/telegram', (req, res) => {
   const db = getDb();
   let dbUser = db.users.find(u => u.telegram_id === telegramId);
 
-  let role: SystemUserRole = overrideRole || 'chief';
-  if (telegramId === '1001' || tgUser.username === 'chief') role = 'chief';
+  const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
+  let role: SystemUserRole = overrideRole || (telegramId === chiefTgId ? 'chief' : 'assistant');
+  if (telegramId === chiefTgId) role = 'chief';
   if (telegramId === '1002' || telegramId === '1003') role = 'assistant';
-  if (telegramId === '1000' || tgUser.username === 'admin') role = 'admin';
+  if (telegramId === '1000') role = 'admin';
 
   if (!dbUser) {
     dbUser = {
