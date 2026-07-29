@@ -6,9 +6,9 @@ export interface BrandingConfig {
   updated_at: string;
 }
 
-export type UserRole = 'boss' | 'assistant_1' | 'assistant_2' | 'admin' | 'chief' | 'assistant';
+export type UserRole = 'boss' | 'assistant_1' | 'assistant_2' | 'admin' | 'chief' | 'assistant' | 'pending' | 'kicked';
 
-export type SystemUserRole = 'chief' | 'assistant' | 'admin';
+export type SystemUserRole = 'chief' | 'assistant' | 'admin' | 'kicked' | 'pending';
 
 export interface DbUser {
   id: string;

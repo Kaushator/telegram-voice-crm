@@ -9,7 +9,7 @@ import { initTelegramWebApp } from './utils/telegramSdk';
 
 export default function App() {
   const [isInitializing, setIsInitializing] = useState(true);
-  const [currentRole, setCurrentRole] = useState<UserRole>('boss');
+  const [currentRole, setCurrentRole] = useState<UserRole | null>(null);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'telegram' | 'docker'>('telegram');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskMessages, setTaskMessages] = useState<Record<string, TaskMessage[]>>({});
@@ -83,13 +83,11 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    initTelegramWebApp();
-    
-    const authenticate = async () => {
-      try {
-        const tgInitData = window.Telegram?.WebApp?.initData || '';
-        
+  const authenticate = async () => {
+    try {
+      const tgInitData = window.Telegram?.WebApp?.initData || '';
+      
+      if (tgInitData) {
         const res = await fetch('/api/auth/me', {
           method: 'POST',
           headers: {
@@ -99,44 +97,59 @@ export default function App() {
           body: JSON.stringify({ initData: tgInitData }),
         });
 
-        const data = await res.json();
-        let mappedRole: UserRole = 'boss';
-        
-        if (data && data.success) {
-          const rawRole = data.role || 'chief';
-          if (rawRole === 'admin') mappedRole = 'admin';
-          else if (rawRole === 'assistant') mappedRole = 'assistant_1';
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success && data.role) {
+            let mappedRole: UserRole = 'boss';
+            const rawRole = data.role;
+            if (rawRole === 'admin') mappedRole = 'boss'; 
+            else if (rawRole === 'assistant') mappedRole = 'assistant_1';
+            else if (rawRole === 'chief') mappedRole = 'boss';
+            else if (rawRole === 'pending') mappedRole = 'pending';
+            else if (rawRole === 'kicked') mappedRole = 'kicked';
+            setCurrentRole(mappedRole);
+            setActiveTab('telegram');
+          } else {
+            setCurrentRole(null);
+          }
+        } else {
+            setCurrentRole(null);
         }
-
-        const inTelegram = !!tgInitData;
-        const isAdminRoute = window.location.pathname === '/admin';
-        
-        if (inTelegram && mappedRole === 'admin') {
-           mappedRole = 'boss';
-        }
-        
-        setCurrentRole(mappedRole);
-
-        if (mappedRole === 'admin' && isAdminRoute && !inTelegram) {
+      } else {
+        // not in telegram
+        setCurrentRole('admin');
+        if (window.location.pathname === '/admin') {
           setActiveTab('dashboard');
         } else {
           setActiveTab('telegram');
         }
-
-      } catch (err) {
-        console.error('Splash auth check failed', err);
-        setCurrentRole('boss');
-        setActiveTab('telegram');
-      } finally {
-        setTimeout(() => {
-          setIsInitializing(false);
-          checkOnboarding();
-        }, 1200); // Wait minimum 1.2s for splash screen
       }
-    };
+    } catch (err) {
+      console.error('Splash auth check failed', err);
+      setCurrentRole(null);
+    }
+  };
 
-    authenticate();
+  useEffect(() => {
+    initTelegramWebApp();
+    
+    authenticate().finally(() => {
+      setTimeout(() => {
+        setIsInitializing(false);
+        checkOnboarding();
+      }, 1200); // Wait minimum 1.2s for splash screen
+    });
   }, []);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (currentRole === 'pending') {
+      interval = setInterval(() => {
+        authenticate();
+      }, 5000);
+    }
+    return () => clearInterval(interval);
+  }, [currentRole]);
 
   useEffect(() => {
     if (isInitializing) return;
@@ -295,6 +308,83 @@ export default function App() {
   }
 
   const inTelegram = !!(window.Telegram?.WebApp?.initData);
+  
+  if (currentRole === 'pending') {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 text-white overflow-hidden">
+        {/* Background Video */}
+        <video
+          autoPlay
+          muted
+          loop
+          playsInline
+          className="absolute inset-0 w-full h-full object-cover scale-105 filter brightness-75 opacity-70"
+          src="/welcome.webm"
+        />
+
+        {/* Dark overlay */}
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/90 via-slate-900/80 to-slate-950/95 backdrop-blur-sm" />
+
+        {/* Content Container */}
+        <div className="relative z-10 flex flex-col items-center max-w-md px-6 text-center space-y-8 animate-fade-in">
+          <div className="space-y-2">
+            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-widest text-white drop-shadow-lg" style={{ fontFamily: 'serif' }}>
+              GARDENS OF EDEN
+            </h1>
+            <p className="text-sm tracking-widest text-emerald-300 font-medium font-serif italic">
+              Luxury of Nature
+            </p>
+          </div>
+
+          <div className="p-6 rounded-2xl bg-slate-900/80 border border-emerald-500/20 shadow-2xl backdrop-blur-md flex flex-col items-center space-y-4 w-full">
+            <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
+              <span className="text-2xl animate-pulse">⏳</span>
+            </div>
+            
+            <div className="space-y-2">
+              <h2 className="text-lg font-semibold text-white">Ожидание авторизации</h2>
+              <p className="text-sm text-slate-400">
+                Ваш аккаунт ожидает назначения роли администратором. Все рабочие роли сейчас заняты.
+              </p>
+            </div>
+
+            <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden mt-4 relative">
+               <div className="absolute inset-0 bg-emerald-500/50 w-1/3 rounded-full animate-bounce-x shadow-[0_0_10px_rgba(16,185,129,0.5)]" style={{ animation: 'shimmer 2s infinite linear' }} />
+            </div>
+          </div>
+          
+          <button
+            onClick={authenticate}
+            className="px-6 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm transition-all shadow-lg shadow-emerald-500/20 border border-emerald-400/30 active:scale-95"
+          >
+            Проверить статус
+          </button>
+        </div>
+        <style>{`
+          @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(300%); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  if (currentRole === null || currentRole === 'kicked') {
+    return (
+      <div className="min-h-screen text-slate-100 flex flex-col items-center justify-center font-sans bg-slate-950">
+        <div className="max-w-md p-6 bg-slate-900 border border-red-500/20 rounded-2xl shadow-xl text-center space-y-4">
+          <div className="w-16 h-16 mx-auto bg-red-500/10 rounded-full flex items-center justify-center">
+            <span className="text-3xl">🚫</span>
+          </div>
+          <h2 className="text-xl font-bold text-white">Access Denied</h2>
+          <p className="text-sm text-slate-400">
+            You do not have permission to access this application. Please contact your administrator.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

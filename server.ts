@@ -601,78 +601,120 @@ const handleAuthMe = (req: Request, res: Response) => {
     (req.body?.initData as string) ||
     (req.query?.initData as string);
 
-  const authReq = req as AuthRequest;
   const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
-
-  if (authReq.user) {
-    const telegramId = authReq.user.telegramId;
-    let role = authReq.user.role || (telegramId === chiefTgId ? 'chief' : 'assistant');
-    if (telegramId === chiefTgId) role = 'chief';
-    if (telegramId === '1000') role = 'admin';
-
-    return res.json({
-      success: true,
-      user: {
-        id: telegramId,
-        telegramId,
-        first_name: authReq.user.displayName || 'Пользователь'
-      },
-      role,
-      token: extractToken(authReq)
-    });
-  }
 
   if (initData) {
     const result = validateTelegramInitData(initData);
     if (result.valid && result.user) {
       const telegramId = String(result.user.id);
-      let role: SystemUserRole = telegramId === chiefTgId ? 'chief' : 'assistant';
-      if (telegramId === '1000') role = 'admin';
+      
+      const db = getDb();
+      let dbUser = db.users.find(u => u.telegram_id === telegramId);
+      
+      if (!dbUser) {
+        let role = 'pending';
+        if (telegramId === chiefTgId) role = 'chief';
+        if (telegramId === '1000') role = 'admin';
+        dbUser = {
+          id: 'usr-' + telegramId,
+          telegram_id: telegramId,
+          role: role as any,
+          created_at: new Date().toISOString(),
+          first_name: result.user.first_name,
+          username: result.user.username
+        };
+        db.users.push(dbUser);
+        saveDb();
+      } else {
+        // Update name if changed
+        if (result.user.first_name && dbUser.first_name !== result.user.first_name) {
+          dbUser.first_name = result.user.first_name;
+          saveDb();
+        }
+      }
 
-      const payload: JwtPayload = {
-        userId: 'usr-' + telegramId,
+      // If user is pending or kicked, they shouldn't get a valid jwt for protected endpoints
+      // but we need to return their state to the client.
+      const payload = {
+        userId: dbUser.id,
         telegramId,
-        role,
-        displayName: result.user.first_name || 'Пользователь'
+        role: dbUser.role,
+        displayName: dbUser.first_name || 'Пользователь'
       };
-      const token = generateJwtToken(payload);
+      
+      const token = (dbUser.role !== 'kicked' && dbUser.role !== 'pending') ? generateJwtToken(payload) : '';
 
       return res.json({
         success: true,
         user: {
           id: result.user.id,
           telegramId,
-          first_name: result.user.first_name,
-          username: result.user.username
+          first_name: dbUser.first_name,
+          username: dbUser.username
         },
-        role,
+        role: dbUser.role,
         token
       });
+    } else {
+        return res.status(401).json({ success: false, error: 'Invalid init data' });
     }
   }
 
   // Fallback for dev / browser preview
-  const defaultUser = {
-    id: 1001,
-    telegramId: '1001',
-    first_name: 'Шеф',
-    username: 'chief'
-  };
-  const token = generateJwtToken({
-    userId: 'usr-1001',
-    telegramId: '1001',
-    role: 'chief',
-    displayName: 'Шеф'
-  });
-
   return res.json({
     success: true,
-    user: defaultUser,
-    role: 'chief',
-    token,
+    user: { id: 1000, telegramId: '1000', first_name: 'Admin', username: 'admin' },
+    role: 'admin',
+    token: generateJwtToken({ userId: 'usr-admin', telegramId: '1000', role: 'admin', displayName: 'Admin' }),
     isDevFallback: true
   });
 };
+
+
+app.get('/api/admin/users', (req, res) => {
+  const db = getDb();
+  res.json({ success: true, users: db.users });
+});
+
+app.post('/api/admin/set-role', express.json(), (req, res) => {
+  const { userId, role } = req.body;
+  const db = getDb();
+  const user = db.users.find(u => u.id === userId);
+  if (user) {
+    user.role = role;
+    saveDb();
+    res.json({ success: true, user });
+  } else {
+    res.status(404).json({ success: false, error: 'User not found' });
+  }
+});
+
+
+app.post('/api/admin/unban', express.json(), (req, res) => {
+  const { userId } = req.body;
+  const db = getDb();
+  const user = db.users.find(u => u.id === userId);
+  if (user) {
+    user.role = 'pending' as any;
+    saveDb();
+    res.json({ success: true, user });
+  } else {
+    res.status(404).json({ success: false, error: 'User not found' });
+  }
+});
+
+app.post('/api/admin/kick', express.json(), (req, res) => {
+  const { userId } = req.body;
+  const db = getDb();
+  const user = db.users.find(u => u.id === userId);
+  if (user) {
+    user.role = 'kicked' as any;
+    saveDb();
+    res.json({ success: true, user });
+  } else {
+    res.status(404).json({ success: false, error: 'User not found' });
+  }
+});
 
 app.get('/api/auth/me', handleAuthMe);
 app.post('/api/auth/me', handleAuthMe);
@@ -1288,6 +1330,9 @@ app.post('/api/auth/telegram', (req, res) => {
 
   const db = getDb();
   let dbUser = db.users.find(u => u.telegram_id === telegramId);
+  if (dbUser && dbUser.role === 'kicked') {
+    return res.status(403).json({ error: 'ACCESS_DENIED', message: 'Access denied' });
+  }
 
   const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
   let role: SystemUserRole = overrideRole || (telegramId === chiefTgId ? 'chief' : 'assistant');

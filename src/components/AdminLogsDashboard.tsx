@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { LogEntry } from '../types';
 import { MacDeploymentGuide } from './MacDeploymentGuide';
 import { MacWorkerConfigurator } from './MacWorkerConfigurator';
+import { UserManagement } from './UserManagement';
 
 interface AdminLogsDashboardProps {
   logs: LogEntry[];
@@ -227,6 +228,8 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
       </div>
 
       {/* Logs Table Section */}
+      <UserManagement />
+
       <div className="bg-slate-900 rounded-lg border border-slate-800 text-slate-100 overflow-hidden shadow-lg">
         <div className="bg-slate-800 px-4 py-3 border-b border-slate-700 flex items-center justify-between">
           <div>

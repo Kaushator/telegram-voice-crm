@@ -7,7 +7,7 @@ const DEFAULT_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '7123456789:ABCdefGH
 export interface JwtPayload {
   userId: string;
   telegramId: string;
-  role: 'chief' | 'assistant' | 'admin';
+  role: import('./types.js').SystemUserRole;
   displayName?: string;
 }
 
