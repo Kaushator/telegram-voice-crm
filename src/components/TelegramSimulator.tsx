@@ -12,6 +12,7 @@ import { FileUploader } from './FileUploader';
 interface TelegramSimulatorProps {
   currentRole: UserRole;
   tasks: Task[];
+  taskMessages: Record<string, TaskMessage[]>;
   onSendVoiceMessage: (title: string, durationSec: number) => void;
   onTakeTask: (taskId: string, assistantId: string, assistantName: string) => void;
   onAskQuestion: (taskId: string, assistantId: string, assistantName: string, questionTh: string) => void;
@@ -23,6 +24,7 @@ interface TelegramSimulatorProps {
 export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   currentRole,
   tasks,
+  taskMessages,
   onSendVoiceMessage,
   onTakeTask,
   onAskQuestion,
@@ -51,7 +53,6 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
 
   // Chat & Conflict State
-  const [taskMessagesMap, setTaskMessagesMap] = useState<Record<string, TaskMessage[]>>({});
   const [chatInputs, setChatInputs] = useState<Record<string, string>>({});
   const [conflictErrors, setConflictErrors] = useState<Record<string, string>>({});
   const [activeTabMap, setActiveTabMap] = useState<Record<string, 'chat' | 'history' | 'pipeline'>>({});
@@ -97,22 +98,9 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
     }
   }, [currentRole]);
 
-  const fetchTaskMessages = (taskId: string) => {
-    fetch(`/api/tasks/${taskId}/messages?userId=${currentAssistantId}&role=${currentRole}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.messages) {
-          setTaskMessagesMap((prev) => ({ ...prev, [taskId]: data.messages }));
-        }
-      })
-      .catch((err) => console.error('Error fetching messages', err));
-  };
-
   const [easterEggLang, setEasterEggLang] = useState<'ru' | 'en' | 'th'>('ru');
 
   useEffect(() => {
-    tasks.forEach((t) => fetchTaskMessages(t.id));
-
     const completedBossTasksCount = tasks.filter((t) => t.status === 'completed').length;
     if (completedBossTasksCount >= 5 && !hasSeenKseniaEasterEgg) {
       setShowKseniaEasterEgg(true);
@@ -174,7 +162,6 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
       } else {
         setChatInputs((prev) => ({ ...prev, [taskId]: '' }));
         setConflictErrors((prev) => ({ ...prev, [taskId]: '' }));
-        fetchTaskMessages(taskId);
         if (onRefreshAll) onRefreshAll();
       }
     } catch (err: any) {
@@ -855,7 +842,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                           activeTabMap[task.id] === 'chat' || !activeTabMap[task.id] ? 'bg-sky-600 text-white' : 'bg-slate-900 text-slate-400'
                         }`}
                       >
-                        💬 {currentRole.startsWith('assistant') ? 'แชท' : 'Чат'} ({taskMessagesMap[task.id]?.length || 0})
+                        💬 {currentRole.startsWith('assistant') ? 'แชท' : 'Чат'} ({taskMessages[task.id]?.length || 0})
                       </button>
                       <button
                         onClick={() => setActiveTabMap((p) => ({ ...p, [task.id]: 'pipeline' }))}
@@ -944,12 +931,12 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                     {(activeTabMap[task.id] === 'chat' || !activeTabMap[task.id]) && (
                       <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-2 text-[11px]">
                         <div className="space-y-2 max-h-40 overflow-y-auto">
-                          {!taskMessagesMap[task.id] || taskMessagesMap[task.id].length === 0 ? (
+                          {!taskMessages[task.id] || taskMessages[task.id].length === 0 ? (
                             <div className="text-slate-500 italic text-center py-2">
                               {currentRole.startsWith('assistant') ? 'ยังไม่มีข้อความในแชท' : 'Сообщений в чате пока нет'}
                             </div>
                           ) : (
-                            taskMessagesMap[task.id].map((msg) => (
+                            taskMessages[task.id].map((msg) => (
                               <div key={msg.id} className="bg-slate-900 p-2 rounded border border-slate-800 space-y-1">
                                 <div className="flex items-center justify-between font-mono text-[10px] text-sky-400">
                                   <span>{msg.sender_name} [{msg.sender_role}]</span>

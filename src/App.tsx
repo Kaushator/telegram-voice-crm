@@ -1,20 +1,33 @@
 import { useState, useEffect } from 'react';
-import { UserRole, Task, LogEntry, MacContainerState } from './types';
+import { UserRole, Task, LogEntry, MacContainerState, TaskMessage } from './types';
 import { RoleSelector } from './components/RoleSelector';
 import { TelegramSimulator } from './components/TelegramSimulator';
 import { AdminLogsDashboard } from './components/AdminLogsDashboard';
 import { MacContainerStatus } from './components/MacContainerStatus';
 import { FirstRunOnboardingWizard } from './components/FirstRunOnboardingWizard';
+import { SplashScreen } from './components/SplashScreen';
 import { initTelegramWebApp } from './utils/telegramSdk';
 
 export default function App() {
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [currentRole, setCurrentRole] = useState<UserRole>('boss');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'telegram' | 'docker'>('telegram');
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskMessages, setTaskMessages] = useState<Record<string, TaskMessage[]>>({});
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [containers, setContainers] = useState<Record<string, MacContainerState>>({});
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+
+  const handleAuthenticated = (role: UserRole, user: any) => {
+    setCurrentRole(role);
+    if (role === 'admin') {
+      setActiveTab('dashboard');
+    } else {
+      setActiveTab('telegram');
+    }
+    setIsAuthChecking(false);
+  };
 
   const checkOnboarding = async () => {
     try {
@@ -32,16 +45,26 @@ export default function App() {
   };
 
   const fetchTasks = async () => {
+    if (activeTab !== 'telegram') return;
     try {
       const res = await fetch('/api/tasks');
       const data = await res.json();
       if (data.tasks) setTasks(data.tasks);
+      if (data.taskMessages) {
+        const grouped: Record<string, TaskMessage[]> = {};
+        data.taskMessages.forEach((m: TaskMessage) => {
+          if (!grouped[m.task_id]) grouped[m.task_id] = [];
+          grouped[m.task_id].push(m);
+        });
+        setTaskMessages(grouped);
+      }
     } catch (err) {
       console.error('Error fetching tasks', err);
     }
   };
 
   const fetchLogs = async () => {
+    if (activeTab !== 'dashboard') return;
     try {
       const res = await fetch('/api/logs');
       const data = await res.json();
@@ -52,6 +75,7 @@ export default function App() {
   };
 
   const fetchContainers = async () => {
+    if (activeTab !== 'docker') return;
     try {
       const res = await fetch('/api/containers');
       const data = await res.json();
@@ -64,15 +88,23 @@ export default function App() {
   useEffect(() => {
     initTelegramWebApp();
     checkOnboarding();
+  }, []);
+
+  useEffect(() => {
+    if (isAuthChecking) return;
+    
+    // Initial fetch when tab changes
     fetchTasks();
     fetchLogs();
     fetchContainers();
+    
     const interval = setInterval(() => {
       fetchTasks();
       fetchLogs();
+      fetchContainers();
     }, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [activeTab, isAuthChecking]);
 
 
   const handleSendVoiceMessage = async (title: string, durationSec: number) => {
@@ -169,6 +201,10 @@ export default function App() {
         backgroundImage: `linear-gradient(to bottom, rgba(15, 23, 42, 0.82), rgba(15, 23, 42, 0.92)), url('/eden_bg.jpg')`
       }}
     >
+      {isAuthChecking && (
+        <SplashScreen onAuthenticated={handleAuthenticated} />
+      )}
+
       <RoleSelector
         currentRole={currentRole}
         onSelectRole={(r) => {
@@ -184,6 +220,7 @@ export default function App() {
           <TelegramSimulator
             currentRole={currentRole}
             tasks={tasks}
+            taskMessages={taskMessages}
             onSendVoiceMessage={handleSendVoiceMessage}
             onTakeTask={handleTakeTask}
             onAskQuestion={handleAskQuestion}

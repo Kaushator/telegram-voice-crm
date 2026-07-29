@@ -595,6 +595,88 @@ app.post('/api/auth/validate-init-data', (req: Request, res: Response) => {
   });
 });
 
+const handleAuthMe = (req: Request, res: Response) => {
+  const initData =
+    (req.headers['x-telegram-init-data'] as string) ||
+    (req.body?.initData as string) ||
+    (req.query?.initData as string);
+
+  const authReq = req as AuthRequest;
+  const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
+
+  if (authReq.user) {
+    const telegramId = authReq.user.telegramId;
+    let role = authReq.user.role || (telegramId === chiefTgId ? 'chief' : 'assistant');
+    if (telegramId === chiefTgId) role = 'chief';
+    if (telegramId === '1000') role = 'admin';
+
+    return res.json({
+      success: true,
+      user: {
+        id: telegramId,
+        telegramId,
+        first_name: authReq.user.displayName || 'Пользователь'
+      },
+      role,
+      token: extractToken(authReq)
+    });
+  }
+
+  if (initData) {
+    const result = validateTelegramInitData(initData);
+    if (result.valid && result.user) {
+      const telegramId = String(result.user.id);
+      let role: SystemUserRole = telegramId === chiefTgId ? 'chief' : 'assistant';
+      if (telegramId === '1000') role = 'admin';
+
+      const payload: JwtPayload = {
+        userId: 'usr-' + telegramId,
+        telegramId,
+        role,
+        displayName: result.user.first_name || 'Пользователь'
+      };
+      const token = generateJwtToken(payload);
+
+      return res.json({
+        success: true,
+        user: {
+          id: result.user.id,
+          telegramId,
+          first_name: result.user.first_name,
+          username: result.user.username
+        },
+        role,
+        token
+      });
+    }
+  }
+
+  // Fallback for dev / browser preview
+  const defaultUser = {
+    id: 1001,
+    telegramId: '1001',
+    first_name: 'Шеф',
+    username: 'chief'
+  };
+  const token = generateJwtToken({
+    userId: 'usr-1001',
+    telegramId: '1001',
+    role: 'chief',
+    displayName: 'Шеф'
+  });
+
+  return res.json({
+    success: true,
+    user: defaultUser,
+    role: 'chief',
+    token,
+    isDevFallback: true
+  });
+};
+
+app.get('/api/auth/me', handleAuthMe);
+app.post('/api/auth/me', handleAuthMe);
+
 let slots: {
   assistant1: { name: string; telegram_id: string; worker_url: string; active: boolean } | null;
   assistant2: { name: string; telegram_id: string; worker_url: string; active: boolean } | null;
@@ -2040,7 +2122,7 @@ app.post('/api/system/onboarding-setup', (req, res) => {
 
 app.get('/api/tasks', (req, res) => {
   const db = getDb();
-  res.json({ tasks, dbTasks: db.tasks });
+  res.json({ tasks, dbTasks: db.tasks, taskMessages: db.taskMessages });
 });
 
 app.post('/api/tasks', upload.single('audio'), async (req, res) => {
