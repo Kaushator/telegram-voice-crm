@@ -3,6 +3,7 @@ import { LogEntry } from '../types';
 import { MacDeploymentGuide } from './MacDeploymentGuide';
 import { MacWorkerConfigurator } from './MacWorkerConfigurator';
 import { UserManagement } from './UserManagement';
+import { SystemAiAdminControl } from './SystemAiAdminControl';
 
 interface AdminLogsDashboardProps {
   logs: LogEntry[];
@@ -101,6 +102,9 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
     <div className="space-y-6">
       {/* User Management Section */}
       <UserManagement />
+
+      {/* System AI Admin Control */}
+      <SystemAiAdminControl />
 
       {/* Mac Worker Configurator & File Generator */}
       <MacWorkerConfigurator />

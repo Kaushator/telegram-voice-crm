@@ -5,7 +5,6 @@ import { EdenLogo } from './EdenLogo';
 import { MacDeploymentGuide } from './MacDeploymentGuide';
 import { MacWorkerConfigurator } from './MacWorkerConfigurator';
 import { OpenRouterAdminControl } from './OpenRouterAdminControl';
-import { SystemAiAdminControl } from './SystemAiAdminControl';
 import { FileUploader } from './FileUploader';
 
 
@@ -539,7 +538,6 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
             </div>
 
             {/* Unified Admin Control */}
-            <SystemAiAdminControl />
           </div>
         )}
 

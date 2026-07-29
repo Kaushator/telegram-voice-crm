@@ -34,6 +34,7 @@ interface HealthLogEntry {
   details?: Record<string, any>;
 }
 
+
 export const SystemAiAdminControl: React.FC = () => {
   const [systemStatus, setSystemStatus] = useState<SystemStatusData | null>(null);
   const [healthLogs, setHealthLogs] = useState<HealthLogEntry[]>([]);
@@ -221,8 +222,9 @@ export const SystemAiAdminControl: React.FC = () => {
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-slate-100 shadow-2xl space-y-5">
-      {/* HEADER WITH ZERO-CONFIG BADGE */}
+    <div className="space-y-5">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-slate-100 shadow-2xl space-y-5">
+        {/* HEADER WITH ZERO-CONFIG BADGE */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
         <div>
           <div className="flex items-center gap-2">
@@ -599,6 +601,7 @@ export const SystemAiAdminControl: React.FC = () => {
           </div>
         )}
       </div>
+    </div>
     </div>
   );
 };
