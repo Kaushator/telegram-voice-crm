@@ -5,6 +5,7 @@ import { TelegramSimulator } from './components/TelegramSimulator';
 import { AdminLogsDashboard } from './components/AdminLogsDashboard';
 import { MacContainerStatus } from './components/MacContainerStatus';
 import { FirstRunOnboardingWizard } from './components/FirstRunOnboardingWizard';
+import { initTelegramWebApp } from './utils/telegramSdk';
 
 export default function App() {
   const [currentRole, setCurrentRole] = useState<UserRole>('boss');
@@ -61,6 +62,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    initTelegramWebApp();
     checkOnboarding();
     fetchTasks();
     fetchLogs();
