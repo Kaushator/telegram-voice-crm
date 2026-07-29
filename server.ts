@@ -41,13 +41,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
   const appUrl = process.env.APP_URL;
 
-  res.removeHeader('X-Frame-Options');
-  res.setHeader(
-    'Content-Security-Policy',
-    "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org"
-  );
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-
   if (origin) {
     if (
       (appUrl && (origin === appUrl || origin.startsWith(appUrl))) ||
@@ -70,6 +63,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Telegram-Init-Data, X-Worker-Secret, X-Requested-With, Cookie');
+
+  // Allow Telegram WebApp iframe embedding across all Telegram platforms
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org https://*.t.me;");
+  res.removeHeader('X-Frame-Options');
 
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
@@ -559,6 +556,40 @@ function requireRole(...allowedRoles: SystemUserRole[]) {
 
 app.use(authenticateToken);
 
+app.post('/api/auth/validate-init-data', (req: Request, res: Response) => {
+  const initData = req.body?.initData || req.headers['x-telegram-init-data'];
+  if (!initData) {
+    return res.status(400).json({ success: false, error: 'MISSING_INIT_DATA', message: 'initData не предоставлен' });
+  }
+
+  const result = validateTelegramInitData(initData);
+  if (!result.valid || !result.user) {
+    return res.status(401).json({
+      success: false,
+      error: 'INVALID_INIT_DATA',
+      message: result.reason || 'Ошибка валидации подписи HMAC'
+    });
+  }
+
+  const role: SystemUserRole = result.user.username === 'chief' || result.user.id === 1001 ? 'chief' : 'assistant';
+  const payload: JwtPayload = {
+    userId: 'usr-' + result.user.id,
+    telegramId: String(result.user.id),
+    role,
+    displayName: result.user.first_name || 'Пользователь'
+  };
+
+  const token = generateJwtToken(payload);
+
+  return res.json({
+    success: true,
+    user: result.user,
+    role,
+    token,
+    message: 'initData успешно валидирован'
+  });
+});
+
 let slots: {
   assistant1: { name: string; telegram_id: string; worker_url: string; active: boolean } | null;
   assistant2: { name: string; telegram_id: string; worker_url: string; active: boolean } | null;
@@ -628,14 +659,14 @@ let macContainers: Record<string, any> = {
 const upload = multer({
   dest: uploadDir,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB max size
+    fileSize: 50 * 1024 * 1024, // 50MB max size limit per file
     files: 5
   },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    const dangerousExts = ['.exe', '.bat', '.cmd', '.sh', '.js', '.ts', '.php', '.py', '.pl', '.vbs', '.scr', '.html', '.htm'];
-    if (dangerousExts.includes(ext)) {
-      return cb(new Error('Загрузка исполняемых или потенциально опасных файлов (.exe, .sh, .js, .php) запрещена по соображениям безопасности.'));
+    const allowedExts = ['.pdf', '.jpg', '.jpeg', '.png', '.zip', '.docx', '.doc'];
+    if (!allowedExts.includes(ext)) {
+      return cb(new Error('Разрешена загрузка только документов и архивов форматов: PDF, JPG, PNG, ZIP, DOCX, DOC.'));
     }
     cb(null, true);
   }

@@ -13,15 +13,54 @@ export interface JwtPayload {
 
 export function validateTelegramInitData(
   initDataRaw: string,
-  botToken: string = DEFAULT_BOT_TOKEN
+  botToken: string = process.env.TELEGRAM_BOT_TOKEN || DEFAULT_BOT_TOKEN
 ): { valid: boolean; user?: any; reason?: string } {
   if (!initDataRaw) return { valid: false, reason: 'Empty initData' };
 
-  const urlParams = new URLSearchParams(initDataRaw);
-  const hash = urlParams.get('hash');
+  try {
+    const urlParams = new URLSearchParams(initDataRaw);
+    const hash = urlParams.get('hash');
 
-  // Handle development / test initData strings or test tokens
-  if (!hash) {
+    if (!hash) {
+      // Test mode fallback for development and local testing
+      if (initDataRaw === 'test_chief') {
+        return { valid: true, user: { id: 1001, first_name: 'Шеф', username: 'chief' } };
+      }
+      if (initDataRaw === 'test_assistant_1') {
+        return { valid: true, user: { id: 1002, first_name: 'Анна', username: 'anna_asst' } };
+      }
+      if (initDataRaw === 'test_assistant_2') {
+        return { valid: true, user: { id: 1003, first_name: 'Игорь', username: 'igor_asst' } };
+      }
+      return { valid: false, reason: 'Missing hash parameter in initData' };
+    }
+
+    urlParams.delete('hash');
+    const params: [string, string][] = [];
+    for (const [key, value] of urlParams.entries()) {
+      params.push([key, value]);
+    }
+    params.sort((a, b) => a[0].localeCompare(b[0]));
+    const dataCheckString = params.map(([k, v]) => `${k}=${v}`).join('\n');
+
+    // HMAC-SHA256 signature verification according to Telegram WebApp specification
+    const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+    const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+    const calculatedBuffer = Buffer.from(calculatedHash, 'hex');
+    const hashBuffer = Buffer.from(hash, 'hex');
+
+    const isValid =
+      calculatedBuffer.length === hashBuffer.length &&
+      crypto.timingSafeEqual(calculatedBuffer, hashBuffer);
+
+    if (isValid) {
+      const userStr = urlParams.get('user');
+      const user = userStr ? JSON.parse(userStr) : null;
+      return { valid: true, user };
+    }
+
+    // Dev mode fallback when user parameter is present
     if (initDataRaw.includes('user=')) {
       try {
         const userStr = urlParams.get('user');
@@ -33,50 +72,11 @@ export function validateTelegramInitData(
         // Fallback below
       }
     }
-    // Test mode fallback
-    if (initDataRaw === 'test_chief') {
-      return { valid: true, user: { id: 1001, first_name: 'Шеф', username: 'chief' } };
-    }
-    if (initDataRaw === 'test_assistant_1') {
-      return { valid: true, user: { id: 1002, first_name: 'Анна', username: 'anna_asst' } };
-    }
-    if (initDataRaw === 'test_assistant_2') {
-      return { valid: true, user: { id: 1003, first_name: 'Игорь', username: 'igor_asst' } };
-    }
-    return { valid: false, reason: 'Missing hash parameter in initData' };
+
+    return { valid: false, reason: 'HMAC signature verification failed' };
+  } catch (err: any) {
+    return { valid: false, reason: err.message || 'Error processing initData' };
   }
-
-  urlParams.delete('hash');
-  const params: [string, string][] = [];
-  for (const [key, value] of urlParams.entries()) {
-    params.push([key, value]);
-  }
-  params.sort((a, b) => a[0].localeCompare(b[0]));
-  const dataCheckString = params.map(([k, v]) => `${k}=${v}`).join('\n');
-
-  const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
-  const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
-
-  if (calculatedHash.toLowerCase() === hash.toLowerCase()) {
-    const userStr = urlParams.get('user');
-    const user = userStr ? JSON.parse(userStr) : null;
-    return { valid: true, user };
-  }
-
-  // Fallback for dev mode when mock botToken is used
-  if (initDataRaw.includes('user=')) {
-    try {
-      const userStr = urlParams.get('user');
-      if (userStr) {
-        const user = JSON.parse(userStr);
-        return { valid: true, user };
-      }
-    } catch {
-      // Ignored
-    }
-  }
-
-  return { valid: false, reason: 'HMAC signature verification failed' };
 }
 
 export function generateJwtToken(payload: JwtPayload): string {
@@ -89,4 +89,39 @@ export function verifyJwtToken(token: string): JwtPayload | null {
   } catch {
     return null;
   }
+}
+
+export function telegramAuthMiddleware(req: any, res: any, next: any) {
+  const initData =
+    (req.headers['x-telegram-init-data'] as string) ||
+    (req.headers['telegram-init-data'] as string) ||
+    req.body?.initData ||
+    req.query?.initData;
+
+  if (!initData) {
+    return res.status(401).json({
+      error: 'UNAUTHORIZED',
+      message: 'Отсутствует параметр initData от Telegram WebApp'
+    });
+  }
+
+  const result = validateTelegramInitData(initData);
+  if (!result.valid) {
+    return res.status(401).json({
+      error: 'UNAUTHORIZED',
+      message: `Ошибка проверки подписи initData: ${result.reason}`
+    });
+  }
+
+  req.telegramUser = result.user;
+  if (result.user) {
+    req.user = {
+      userId: 'usr-' + result.user.id,
+      telegramId: String(result.user.id),
+      role: result.user.username === 'chief' || result.user.id === 1001 ? 'chief' : 'assistant',
+      displayName: result.user.first_name || 'Пользователь'
+    };
+  }
+
+  next();
 }

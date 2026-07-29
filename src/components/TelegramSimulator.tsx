@@ -415,102 +415,87 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
             </div>
 
             {!showHistory && (
-              <div className="bg-slate-800/90 border border-slate-700 rounded-lg p-3.5 space-y-3 text-xs shadow-md">
-                <div className="font-semibold text-slate-200 flex items-center justify-between">
-                  <span>Создание голосового задания</span>
-                  {isRecording && <span className="text-rose-400 font-mono text-[10px] animate-pulse">● ЗАПИСЬ</span>}
+              <div className="bg-slate-900/90 border border-sky-800/60 rounded-xl p-4 space-y-3.5 text-xs shadow-lg relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-sky-500 animate-ping" />
+                    <span className="font-semibold text-slate-100 text-sm">Голосовое поручение Шефа</span>
+                  </div>
+                  {isRecording && (
+                    <span className="text-rose-400 font-mono text-xs font-bold animate-pulse px-2 py-0.5 bg-rose-950/60 rounded border border-rose-800">
+                      REC ●
+                    </span>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Название задания</label>
-                    <input
-                      type="text"
-                      value={voiceTitle}
-                      onChange={(e) => setVoiceTitle(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 text-xs focus:outline-none focus:border-sky-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">
-                      Длительность 1-й части: <span className="font-mono text-sky-400">{durationSec} сек</span>
-                    </label>
-                    <input
-                      type="range"
-                      min={15}
-                      max={300}
-                      step={15}
-                      value={durationSec}
-                      onChange={(e) => setDurationSec(parseInt(e.target.value))}
-                      className="w-full accent-sky-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Soundwave / Waveform visualizer simulation */}
+                {/* Soundwave / Waveform visualizer */}
                 {isRecording && (
-                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-2">
-                    <div className="text-[10px] text-slate-400 font-mono text-center">Визуализация звуковой волны (Waveform)</div>
-                    <div className="flex items-center justify-center gap-1.5 h-10">
-                      {[...Array(16)].map((_, i) => (
+                  <div className="bg-slate-950 p-3.5 rounded-xl border border-sky-900/60 space-y-3">
+                    <div className="flex items-center justify-between text-xs font-mono">
+                      <span className="text-slate-400">Запись аудиопотока...</span>
+                      <span className="text-sky-400 font-bold">{durationSec} сек</span>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-1.5 h-12">
+                      {[...Array(20)].map((_, i) => (
                         <div
                           key={i}
-                          className="w-1.5 bg-sky-500 rounded-full animate-bounce"
+                          className="w-1.5 bg-sky-400 rounded-full animate-bounce"
                           style={{
-                            height: `${Math.floor(Math.random() * 28) + 8}px`,
-                            animationDelay: `${(i % 5) * 120}ms`
+                            height: `${Math.floor(Math.random() * 32) + 10}px`,
+                            animationDelay: `${(i % 6) * 100}ms`
                           }}
                         />
                       ))}
                     </div>
 
                     {/* Sequential Voice Parts Chain */}
-                    {audioPartsChain.length > 0 && (
-                      <div className="space-y-1 pt-2 border-t border-slate-800">
-                        <div className="text-[10px] text-slate-400 font-mono font-bold">Записанные части:</div>
-                        <div className="flex flex-wrap gap-1.5 text-[10px]">
-                          <span className="bg-sky-950 text-sky-300 px-2 py-0.5 rounded border border-sky-800">
-                            Part 1 ({durationSec} сек)
-                          </span>
-                          {audioPartsChain.map((part) => (
-                            <span key={part.id} className="bg-sky-950 text-sky-300 px-2 py-0.5 rounded border border-sky-800">
-                              Part {part.partNum + 1} ({part.duration} сек)
-                            </span>
-                          ))}
-                        </div>
+                    <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                      <div className="text-[11px] text-slate-400 font-mono font-bold">
+                        Записано фрагментов ({audioPartsChain.length + 1}):
                       </div>
-                    )}
+                      <div className="flex flex-wrap gap-1.5 text-xs font-mono">
+                        <span className="bg-sky-950 text-sky-300 px-2.5 py-1 rounded border border-sky-800 font-semibold">
+                          Фрагмент 1 ({durationSec} сек)
+                        </span>
+                        {audioPartsChain.map((part) => (
+                          <span key={part.id} className="bg-indigo-950 text-indigo-300 px-2.5 py-1 rounded border border-indigo-800 font-semibold">
+                            Фрагмент {part.partNum + 1} ({part.duration} сек)
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
 
-                {/* Record Buttons Bar */}
+                {/* Prominent Recording & Action Controls */}
                 {!isRecording ? (
                   <button
                     onClick={handleStartVoiceRecord}
-                    className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-semibold rounded-lg transition-colors text-xs flex items-center justify-center gap-2 shadow"
+                    className="w-full py-4 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-sky-500/20 text-base flex items-center justify-center gap-2"
                   >
-                    <span>🎙</span>
-                    Записать новое голосовое задание
+                    <span className="text-xl">🎙</span>
+                    <span>Дать задание</span>
                   </button>
                 ) : (
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-2 pt-1">
                     <button
                       onClick={handleAddVoicePart}
-                      className="py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded text-xs transition-colors flex items-center justify-center gap-1"
+                      className="py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1 shadow"
                     >
-                      ➕ Еще голос
+                      <span>➕ Дописать</span>
                     </button>
                     <button
                       onClick={handleFinishVoiceTask}
-                      className="py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded text-xs transition-colors flex items-center justify-center gap-1"
+                      className="py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1 shadow"
                     >
-                      ✅ Завершить
+                      <span>🚀 Отправить</span>
                     </button>
                     <button
                       onClick={handleCancelVoiceTask}
-                      className="py-2 bg-rose-700 hover:bg-rose-600 text-white font-medium rounded text-xs transition-colors flex items-center justify-center gap-1"
+                      className="py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-lg text-xs transition-colors flex items-center justify-center gap-1 border border-slate-700"
                     >
-                      ❌ Отмена
+                      <span>❌ Отмена</span>
                     </button>
                   </div>
                 )}
@@ -724,37 +709,34 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                     </div>
                   )}
 
-                  {/* Audio Player Component */}
-                  <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 flex items-center justify-between gap-3 text-xs">
-                    <button
-                      onClick={() => {
-                        setPlayingAudioId(playingAudioId === task.id ? null : task.id);
-                        triggerHaptic('impact', 'light');
-                      }}
-                      className="w-8 h-8 rounded-full bg-sky-600 hover:bg-sky-500 flex items-center justify-center text-white font-bold shrink-0"
-                    >
-                      {playingAudioId === task.id ? '⏸' : '▶'}
-                    </button>
-
-                    <div className="flex-1 space-y-1">
-                      <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                        <span>{currentRole.startsWith('assistant') ? `ข้อความเสียง ${task.voiceMessage.durationSeconds} วินาที` : `Голосовое ${task.voiceMessage.durationSeconds} сек`}</span>
-                        <span className="text-sky-400">{playingAudioId === task.id ? (currentRole.startsWith('assistant') ? 'กำลังเล่น...' : 'Воспроизведение...') : (currentRole.startsWith('assistant') ? 'พร้อมเล่น' : 'Готово')}</span>
-                      </div>
-                      <div className="bg-slate-900 h-1.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-sky-500 h-full transition-all"
-                          style={{ width: playingAudioId === task.id ? '65%' : '0%' }}
-                        />
-                      </div>
+                  {/* Compact Audio Playback Badge (Timeline slider removed for clean UI) */}
+                  <div className="bg-slate-950 p-2 rounded-lg border border-slate-800 flex items-center justify-between gap-2 text-xs font-mono">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setPlayingAudioId(playingAudioId === task.id ? null : task.id);
+                          triggerHaptic('impact', 'light');
+                        }}
+                        className="w-7 h-7 rounded-full bg-sky-600 hover:bg-sky-500 flex items-center justify-center text-white font-bold shrink-0 transition-colors"
+                      >
+                        {playingAudioId === task.id ? '⏸' : '▶'}
+                      </button>
+                      <span className="text-slate-300 font-medium">
+                        🎙 {currentRole.startsWith('assistant') ? `ข้อความเสียง ${task.voiceMessage.durationSeconds} วินาที` : `Голосовое ${task.voiceMessage.durationSeconds} сек`}
+                      </span>
                     </div>
 
-                    <button
-                      onClick={() => togglePlaybackSpeed(task.id)}
-                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-sky-400 font-mono rounded text-[11px] font-bold border border-slate-700"
-                    >
-                      {speed}x
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-sky-400">
+                        {playingAudioId === task.id ? (currentRole.startsWith('assistant') ? 'กำลังเล่น...' : 'Воспроизведение') : ''}
+                      </span>
+                      <button
+                        onClick={() => togglePlaybackSpeed(task.id)}
+                        className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-sky-400 font-mono rounded text-[10px] font-bold border border-slate-800"
+                      >
+                        {speed}x
+                      </button>
+                    </div>
                   </div>
 
                   {/* File Exchange Section (Chief <-> Assistant) */}

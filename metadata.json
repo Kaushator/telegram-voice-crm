@@ -2,5 +2,5 @@
   "name": "Telegram Voice CRM",
   "description": "Мини CRM для управления задачами с голосовыми сообщениями Telegram, транскрибацией WhisperX на MacBook и автоматическим переводом",
   "requestFramePermissions": ["microphone"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }
