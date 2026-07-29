@@ -251,7 +251,7 @@ export default function App() {
           loop
           playsInline
           className="absolute inset-0 w-full h-full object-cover scale-105 filter brightness-75"
-          src="/welcome.mp4"
+          src="/welcome.webm"
         />
 
         {/* Dark overlay with subtle gradient */}
