@@ -99,9 +99,11 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* User Management Section */}
+      <UserManagement />
+
       {/* Mac Worker Configurator & File Generator */}
       <MacWorkerConfigurator />
-
 
       {/* Deployment Guide for Employee MacBooks */}
       <MacDeploymentGuide />
@@ -228,7 +230,6 @@ export const AdminLogsDashboard: React.FC<AdminLogsDashboardProps> = ({
       </div>
 
       {/* Logs Table Section */}
-      <UserManagement />
 
       <div className="bg-slate-900 rounded-lg border border-slate-800 text-slate-100 overflow-hidden shadow-lg">
         <div className="bg-slate-800 px-4 py-3 border-b border-slate-700 flex items-center justify-between">
