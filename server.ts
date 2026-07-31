@@ -52,8 +52,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
       origin.includes('.ngrok')
     ) {
       res.setHeader('Access-Control-Allow-Origin', origin);
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', origin);
     }
   } else if (appUrl) {
     res.setHeader('Access-Control-Allow-Origin', appUrl);
@@ -631,12 +629,30 @@ function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) 
   if (initDataHeader) {
     const valResult = validateTelegramInitData(initDataHeader);
     if (valResult.valid && valResult.user) {
+      const telegramId = String(valResult.user.id);
       const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
+      const db = getDb();
+      let dbUser = db.users.find(u => u.telegram_id === telegramId);
+
+      if (!dbUser) {
+        const role = telegramId === chiefTgId ? 'boss' : 'pending';
+        dbUser = {
+          id: 'usr-' + telegramId,
+          telegram_id: telegramId,
+          role: role as any,
+          created_at: new Date().toISOString(),
+          first_name: valResult.user.first_name,
+          username: valResult.user.username
+        };
+        db.users.push(dbUser);
+        saveDb();
+      }
+
       req.user = {
-        userId: 'usr-' + valResult.user.id,
-        telegramId: String(valResult.user.id),
-        role: String(valResult.user.id) === String(chiefTgId) ? 'chief' : 'assistant',
-        displayName: valResult.user.first_name || 'Пользователь'
+        userId: dbUser.id,
+        telegramId,
+        role: dbUser.role as any,
+        displayName: dbUser.first_name || 'Пользователь'
       };
       return next();
     }
@@ -650,7 +666,10 @@ function requireRole(...allowedRoles: SystemUserRole[]) {
     if (!req.user) {
       return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Необходима авторизация' });
     }
-    if (!allowedRoles.includes(req.user.role)) {
+    if (req.user.role === 'pending' || req.user.role === 'kicked') {
+      return res.status(403).json({ error: 'ACCOUNT_NOT_ACTIVE', message: 'Аккаунт не активирован или заблокирован' });
+    }
+    if (!allowedRoles.includes(req.user.role as SystemUserRole)) {
       return res.status(403).json({ error: 'FORBIDDEN', message: 'Недостаточно прав доступа' });
     }
     next();
@@ -674,21 +693,36 @@ app.post('/api/auth/validate-init-data', (req: Request, res: Response) => {
     });
   }
 
+  const telegramId = String(result.user.id);
   const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
-  const role: SystemUserRole = String(result.user.id) === String(chiefTgId) ? 'chief' : 'assistant';
-  const payload: JwtPayload = {
-    userId: 'usr-' + result.user.id,
-    telegramId: String(result.user.id),
-    role,
-    displayName: result.user.first_name || 'Пользователь'
-  };
+  const db = getDb();
+  let dbUser = db.users.find(u => u.telegram_id === telegramId);
 
-  const token = generateJwtToken(payload);
+  if (!dbUser) {
+    const role = telegramId === chiefTgId ? 'boss' : 'pending';
+    dbUser = {
+      id: 'usr-' + telegramId,
+      telegram_id: telegramId,
+      role: role as any,
+      created_at: new Date().toISOString(),
+      first_name: result.user.first_name,
+      username: result.user.username
+    };
+    db.users.push(dbUser);
+    saveDb();
+  }
+
+  const token = (dbUser.role !== 'kicked' && dbUser.role !== 'pending') ? generateJwtToken({
+    userId: dbUser.id,
+    telegramId,
+    role: dbUser.role as any,
+    displayName: dbUser.first_name || 'Пользователь'
+  }) : '';
 
   return res.json({
     success: true,
     user: result.user,
-    role,
+    role: dbUser.role,
     token,
     message: 'initData успешно валидирован'
   });
@@ -715,8 +749,7 @@ const handleAuthMe = (req: Request, res: Response) => {
       
       if (!dbUser) {
         console.log(`[AUTH_DIAGNOSTICS][${reqId}] User not found in DB. Creating a pending user.`);
-        let role = 'pending';
-        if (telegramId === chiefTgId) role = 'chief';
+        const role = telegramId === chiefTgId ? 'boss' : 'pending';
         dbUser = {
           id: 'usr-' + telegramId,
           telegram_id: telegramId,
@@ -735,14 +768,13 @@ const handleAuthMe = (req: Request, res: Response) => {
         }
       }
 
-      // Convert 'chief' to 'boss' for the client/API representation (P0.6)
-      const clientRole = dbUser.role === 'chief' ? 'boss' : dbUser.role;
+      const clientRole = dbUser.role;
       console.log(`[AUTH_DIAGNOSTICS][${reqId}] Final resolved role: ${clientRole}`);
 
       const payload = {
         userId: dbUser.id,
         telegramId,
-        role: dbUser.role,
+        role: dbUser.role as any,
         displayName: dbUser.first_name || 'Пользователь'
       };
       
@@ -814,15 +846,60 @@ app.get('/api/admin/users', (req, res) => {
 
 app.post('/api/admin/set-role', express.json(), (req, res) => {
   const { userId, role } = req.body;
+  const validRoles = ['boss', 'assistant', 'pending', 'kicked'];
+  if (!validRoles.includes(role)) {
+    return res.status(400).json({
+      success: false,
+      error: 'INVALID_ROLE',
+      message: 'Недопустимая роль. Допустимые роли: boss, assistant, pending, kicked'
+    });
+  }
+
   const db = getDb();
   const user = db.users.find(u => u.id === userId);
-  if (user) {
-    user.role = role;
-    saveDb();
-    res.json({ success: true, user });
-  } else {
-    res.status(404).json({ success: false, error: 'User not found' });
+  if (!user) {
+    return res.status(404).json({ success: false, error: 'USER_NOT_FOUND', message: 'Пользователь не найден' });
   }
+
+  if (role === 'boss') {
+    const existingBoss = db.users.find(u => u.role === 'boss' && u.id !== userId);
+    if (existingBoss) {
+      return res.status(409).json({
+        success: false,
+        error: 'BOSS_ALREADY_EXISTS',
+        message: `В системе уже есть boss (${existingBoss.first_name || existingBoss.id}). Для смены исполнительного руководителя выполните Replace Boss.`
+      });
+    }
+  }
+
+  user.role = role as any;
+  saveDb();
+  return res.json({ success: true, user });
+});
+
+app.post('/api/admin/replace-boss', express.json(), (req, res) => {
+  const { newBossUserId } = req.body;
+  const db = getDb();
+  const newBossUser = db.users.find(u => u.id === newBossUserId);
+
+  if (!newBossUser) {
+    return res.status(404).json({ success: false, error: 'USER_NOT_FOUND', message: 'Пользователь не найден' });
+  }
+
+  if (newBossUser.role === 'kicked') {
+    return res.status(400).json({ success: false, error: 'USER_KICKED', message: 'Заблокированный пользователь не может стать Boss' });
+  }
+
+  db.users.forEach(u => {
+    if (u.role === 'boss' && u.id !== newBossUserId) {
+      u.role = 'assistant';
+    }
+  });
+
+  newBossUser.role = 'boss';
+  saveDb();
+
+  return res.json({ success: true, message: 'Boss успешно заменен', user: newBossUser });
 });
 
 
@@ -1430,10 +1507,10 @@ app.post('/api/auth/telegram', (req, res) => {
   }
 
   const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
-  let role: SystemUserRole = overrideRole || (telegramId === chiefTgId ? 'chief' : 'assistant');
-  if (telegramId === chiefTgId) role = 'chief';
+  let role: SystemUserRole = overrideRole || (telegramId === chiefTgId ? 'boss' : 'assistant');
+  if (telegramId === chiefTgId) role = 'boss';
   if (telegramId === '1002' || telegramId === '1003') role = 'assistant';
-  if (telegramId === '1000') role = 'admin';
+  if (telegramId === '1000') role = 'boss';
 
   if (!dbUser) {
     dbUser = {
@@ -1614,7 +1691,7 @@ app.post('/api/tasks/:id/finish-intake', (req, res) => {
   const dbTask = db.tasks.find(t => t.id === id);
 
   if (dbTask) {
-    transitionTaskStatus(dbTask, 'available', 'chief', 'Завершен прием голосовых сообщений. Задача опубликована');
+    transitionTaskStatus(dbTask, 'available', 'boss', 'Завершен прием голосовых сообщений. Задача опубликована');
     saveDb();
   }
 
@@ -1643,7 +1720,7 @@ app.post('/api/tasks/:id/cancel', (req, res) => {
   const dbTask = db.tasks.find(t => t.id === id);
 
   if (dbTask) {
-    transitionTaskStatus(dbTask, 'cancelled', 'chief', 'Задача отменена Шефом');
+    transitionTaskStatus(dbTask, 'cancelled', 'boss', 'Задача отменена Шефом');
     saveDb();
   }
 
@@ -1655,11 +1732,13 @@ app.post('/api/tasks/:id/cancel', (req, res) => {
 
 // Accept Task with Atomic Lock
 app.post('/api/tasks/:id/accept', (req: AuthRequest, res) => {
-  const { id } = req.params;
-  const { assistantId, assistantName } = req.body;
+  if (!req.user) {
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Необходима авторизация' });
+  }
 
-  const requestingId = assistantId || req.user?.userId || 'usr-1002';
-  const requestingName = assistantName || req.user?.displayName || 'Ассистент 1 (Анна)';
+  const { id } = req.params;
+  const requestingId = req.user.userId;
+  const requestingName = req.user.displayName || 'Ассистент';
 
   const db = getDb();
   const dbTask = db.tasks.find(t => t.id === id);
@@ -1718,11 +1797,15 @@ app.post('/api/tasks/:id/take', (req: AuthRequest, res) => {
 
 // Task Transfer API
 app.post('/api/tasks/:id/transfer', (req: AuthRequest, res) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Необходима авторизация' });
+  }
+
   const { id } = req.params;
   const { targetAssistantId, targetAssistantName, reason } = req.body;
 
-  const senderId = req.user?.userId || req.body.senderId || 'usr-1002';
-  const senderRole = req.user?.role || req.body.senderRole || 'assistant';
+  const senderId = req.user.userId;
+  const senderRole = req.user.role;
 
   const db = getDb();
   const dbTask = db.tasks.find(t => t.id === id);
@@ -1734,7 +1817,7 @@ app.post('/api/tasks/:id/transfer', (req: AuthRequest, res) => {
 
   const currentOwner = dbTask?.owner_assistant_id || uiTask?.assignedAssistantId;
 
-  if (senderRole !== 'admin' && currentOwner && currentOwner !== senderId) {
+  if (senderRole === 'assistant' && currentOwner && currentOwner !== senderId) {
     return res.status(403).json({
       error: 'FORBIDDEN_TRANSFER',
       message: 'Запрещено: Только текущий владелец задачи может передать её другому ассистенту.'
@@ -1777,7 +1860,7 @@ app.post('/api/tasks/:id/transfer', (req: AuthRequest, res) => {
   });
 });
 
-app.post('/api/tasks/:id/force-transfer', requireRole('admin'), (req: AuthRequest, res) => {
+app.post('/api/tasks/:id/force-transfer', requireRole('boss'), (req: AuthRequest, res) => {
   const { id } = req.params;
   const { targetAssistantId, targetAssistantName, reason } = req.body;
 
@@ -1795,7 +1878,7 @@ app.post('/api/tasks/:id/force-transfer', requireRole('admin'), (req: AuthReques
   if (dbTask) {
     dbTask.owner_assistant_id = newOwnerId;
     dbTask.owner_assistant_name = newOwnerName;
-    transitionTaskStatus(dbTask, 'assigned', 'admin', `Принудительная передача Администратором: ${reason || 'Force Transfer'}`);
+    transitionTaskStatus(dbTask, 'assigned', 'boss', `Принудительная передача Администратором: ${reason || 'Force Transfer'}`);
     saveDb();
   }
 
@@ -1818,11 +1901,15 @@ app.post('/api/tasks/:id/force-transfer', requireRole('admin'), (req: AuthReques
 });
 
 app.post('/api/tasks/:id/status', (req: AuthRequest, res) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Необходима авторизация' });
+  }
+
   const { id } = req.params;
   const { status, reason } = req.body;
 
-  const senderId = req.user?.userId || req.body.senderId || 'usr-1002';
-  const senderRole = req.user?.role || req.body.senderRole || 'assistant';
+  const senderId = req.user.userId;
+  const senderRole = req.user.role;
 
   const db = getDb();
   const dbTask = db.tasks.find(t => t.id === id);
@@ -1857,7 +1944,7 @@ app.get('/api/tasks/:id/messages', (req: AuthRequest, res) => {
   const requesterId = req.user?.userId || (req.query.userId as string);
   const requesterRole = req.user?.role || (req.query.role as string) || 'assistant';
 
-  const isOwner = !currentOwner || currentOwner === requesterId || requesterRole === 'chief' || requesterRole === 'admin';
+  const isOwner = !currentOwner || currentOwner === requesterId || requesterRole === 'boss' || requesterRole === 'admin';
 
   res.json({
     success: true,
@@ -1869,12 +1956,16 @@ app.get('/api/tasks/:id/messages', (req: AuthRequest, res) => {
 });
 
 app.post('/api/tasks/:id/messages', upload.single('audio'), (req: AuthRequest, res) => {
-  const { id } = req.params;
-  const { text, senderId, senderName, senderRole } = req.body;
+  if (!req.user) {
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Необходима авторизация' });
+  }
 
-  const currentUserId = senderId || req.user?.userId || 'usr-1002';
-  const currentUserName = senderName || req.user?.displayName || 'Ассистент 1 (Анна)';
-  const currentUserRole = senderRole || req.user?.role || 'assistant';
+  const { id } = req.params;
+  const { text } = req.body;
+
+  const currentUserId = req.user.userId;
+  const currentUserName = req.user.displayName || 'Пользователь';
+  const currentUserRole = req.user.role;
 
   const db = getDb();
   const dbTask = db.tasks.find(t => t.id === id);
@@ -2316,8 +2407,12 @@ app.post('/api/tasks/mass-create-test', async (req, res) => {
 
 // Questions & Answers Endpoints
 app.post('/api/tasks/:id/question', (req: AuthRequest, res) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Необходима авторизация' });
+  }
+
   const { id } = req.params;
-  const { questionTh, questionText, assistantId, assistantName } = req.body;
+  const { questionTh, questionText } = req.body;
   const qText = questionTh || questionText || 'สอบถามรายละเอียดเพิ่มเติมเกี่ยวกับงานนี้';
 
   const uiTask = tasks.find(t => t.id === id);
@@ -2328,8 +2423,8 @@ app.post('/api/tasks/:id/question', (req: AuthRequest, res) => {
   const qId = 'q-' + Date.now();
   const newQuestion: TaskQuestion = {
     id: qId,
-    assistantId: assistantId || 'usr-1002',
-    assistantName: assistantName || 'Ассистент 1 (Анна)',
+    assistantId: req.user.userId,
+    assistantName: req.user.displayName || 'Ассистент',
     questionTh: qText,
     questionRu: `Уточнение от ассистента: ${qText}`,
     createdAt: new Date().toISOString()
@@ -2363,14 +2458,18 @@ app.post('/api/tasks/:id/reply', (req: AuthRequest, res) => {
   question.repliedAt = new Date().toISOString();
 
   const logMsg = `Шеф дал ответ на вопрос #${questionId} в задаче #${id}: "${replyRu}"`;
-  writeServerLog('INFO', 'chief', logMsg, { taskId: id, questionId, replyRu }, 'TASK_QUESTION_REPLIED');
+  writeServerLog('INFO', 'boss', logMsg, { taskId: id, questionId, replyRu }, 'TASK_QUESTION_REPLIED');
 
   return res.json({ success: true, question });
 });
 
 app.post('/api/tasks/:id/questions', (req: AuthRequest, res) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Необходима авторизация' });
+  }
+
   const { id } = req.params;
-  const { questionText, assistantId, assistantName } = req.body;
+  const { questionText } = req.body;
 
   const db = getDb();
   const dbTask = db.tasks.find(t => t.id === id);
@@ -2383,8 +2482,8 @@ app.post('/api/tasks/:id/questions', (req: AuthRequest, res) => {
   const qId = 'q-' + Date.now();
   const newQuestion: TaskQuestion = {
     id: qId,
-    assistantId: assistantId || req.user?.userId || 'usr-1002',
-    assistantName: assistantName || req.user?.displayName || 'Ассистент 1 (Анна)',
+    assistantId: req.user.userId,
+    assistantName: req.user.displayName || 'Ассистент',
     questionTh: questionText || 'สอบถามรายละเอียดเพิ่มเติมเกี่ยวกับงานนี้',
     questionRu: questionText || 'Вопрос по уточненным деталям задания',
     createdAt: new Date().toISOString()
@@ -2420,15 +2519,19 @@ app.post('/api/tasks/:id/questions/:qId/reply', (req: AuthRequest, res) => {
   question.repliedAt = new Date().toISOString();
 
   const logMsg = `Шеф дал ответ на вопрос #${qId} в задаче #${id}: "${replyText}"`;
-  writeServerLog('INFO', 'chief', logMsg, { taskId: id, qId, replyText }, 'TASK_QUESTION_REPLIED');
+  writeServerLog('INFO', 'boss', logMsg, { taskId: id, qId, replyText }, 'TASK_QUESTION_REPLIED');
 
   return res.json({ success: true, question });
 });
 
 app.post('/api/tasks/:id/complete', (req: AuthRequest, res) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Необходима авторизация' });
+  }
+
   const { id } = req.params;
-  const senderId = req.user?.userId || req.body.assistantId || 'usr-1002';
-  const senderRole = req.user?.role || 'assistant';
+  const senderId = req.user.userId;
+  const senderRole = req.user.role;
 
   const db = getDb();
   const dbTask = db.tasks.find(t => t.id === id);

@@ -18,27 +18,21 @@ export const RoleSelector: React.FC<RoleSelectorProps> = ({
   const roles: { role: UserRole; title: string; subtitle: string; desc: string }[] = [
     {
       role: 'boss',
-      title: 'Шеф (Руководитель)',
+      title: 'Шеф (Boss)',
       subtitle: 'Отправка голосовых задач',
       desc: 'Запись аудиосообщений, отслеживание статуса в реальном времени',
     },
     {
-      role: 'assistant_1',
-      title: 'Ассистент 1 (Анна)',
-      subtitle: 'Обработка задач #1',
-      desc: 'Прием задач Шефа, перевод и контроль качества',
-    },
-    {
-      role: 'assistant_2',
-      title: 'Ассистент 2 (Игорь)',
-      subtitle: 'Обработка задач #2',
+      role: 'assistant',
+      title: 'Ассистент',
+      subtitle: 'Обработка задач',
       desc: 'Прием задач Шефа, перевод и контроль качества',
     },
     {
       role: 'admin',
-      title: 'Администратор',
-      subtitle: 'Логирование и контроль',
-      desc: 'Просмотр журналов сервера, загрузка .txt файлов, оригиналы транскрибаций',
+      title: 'Администратор Web Admin',
+      subtitle: 'Управление ролями и контроль',
+      desc: 'Управление пользователями, просмотр журналов и системные настройки',
     },
   ];
 

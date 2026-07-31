@@ -30,23 +30,36 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser, onR
 
   const handleSetRole = async (userId: string, role: string) => {
     try {
-      await fetch('/api/admin/set-role', {
+      const res = await fetch('/api/admin/set-role', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, role }),
       });
+      const data = await res.json();
+      if (res.status === 409 || data.error === 'BOSS_ALREADY_EXISTS') {
+        if (window.confirm('В системе уже есть boss. Выполнить замену (Replace Boss) и перевести текущего Boss в ассистенты?')) {
+          const repRes = await fetch('/api/admin/replace-boss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ newBossUserId: userId }),
+          });
+          const repData = await repRes.json();
+          if (!repRes.ok || !repData.success) {
+            alert(repData.message || repData.error || 'Ошибка замены Boss');
+            return;
+          }
+        } else {
+          return;
+        }
+      } else if (!res.ok || !data.success) {
+        alert(data.message || data.error || 'Ошибка изменения роли');
+        return;
+      }
       await fetchUsers();
       
       // If admin changed their own role, update the app state instantly
       if (currentUser && (currentUser.id === userId || currentUser.telegram_id === userId) && onRoleChanged) {
-        let mappedRole: UserRole = 'boss';
-        if (role === 'admin') mappedRole = 'admin';
-        else if (role === 'assistant') mappedRole = 'assistant_1';
-        else if (role === 'chief') mappedRole = 'boss';
-        else if (role === 'pending') mappedRole = 'pending';
-        else if (role === 'kicked') mappedRole = 'kicked';
-        
-        onRoleChanged(mappedRole);
+        onRoleChanged(role as UserRole);
       }
     } catch (err) {
       console.error('Error setting role', err);
@@ -107,9 +120,8 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser, onR
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {users.map((user) => {
-              const isChief = user.role === 'chief' || user.role === 'boss';
+              const isBoss = user.role === 'boss';
               const isAssistant = user.role === 'assistant';
-              const isAdmin = user.role === 'admin';
               const isPending = user.role === 'pending';
               const isKicked = user.role === 'kicked';
 
@@ -131,10 +143,8 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser, onR
 
                       <span
                         className={`text-[10px] font-mono font-bold px-2.5 py-1 rounded-md border tracking-wider uppercase ${
-                          isChief
+                          isBoss
                             ? 'bg-amber-950/80 text-amber-300 border-amber-800/80'
-                            : isAdmin
-                            ? 'bg-purple-950/80 text-purple-300 border-purple-800/80'
                             : isAssistant
                             ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/80'
                             : isPending
@@ -167,11 +177,10 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser, onR
                       onChange={(e) => handleSetRole(user.id, e.target.value)}
                     >
                       <option value="none">-- Выберите роль --</option>
-                      <option value="chief">boss (Шеф)</option>
+                      <option value="boss">boss (Шеф)</option>
                       <option value="assistant">assistant (Помощник)</option>
-                      <option value="admin">admin (Администратор)</option>
                       <option value="pending">pending (Ожидание)</option>
-                      <option value="kicked" disabled>kicked (Заблокирован)</option>
+                      <option value="kicked">kicked (Заблокирован)</option>
                     </select>
 
                     {isKicked ? (

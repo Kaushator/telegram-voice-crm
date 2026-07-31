@@ -6,9 +6,9 @@ export interface BrandingConfig {
   updated_at: string;
 }
 
-export type UserRole = 'boss' | 'assistant_1' | 'assistant_2' | 'admin' | 'chief' | 'assistant' | 'pending' | 'kicked';
+export type UserRole = 'boss' | 'assistant' | 'pending' | 'kicked' | 'admin';
 
-export type SystemUserRole = 'chief' | 'assistant' | 'admin' | 'kicked' | 'pending';
+export type SystemUserRole = 'boss' | 'assistant' | 'pending' | 'kicked';
 
 export interface DbUser {
   id: string;
@@ -127,7 +127,7 @@ export interface TaskMessage {
   task_id: string;
   sender_id: string;
   sender_name: string;
-  sender_role: 'chief' | 'assistant' | 'admin';
+  sender_role: UserRole;
   text?: string;
   audio_path?: string;
   created_at: string;

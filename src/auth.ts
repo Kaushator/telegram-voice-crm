@@ -27,7 +27,7 @@ export function validateTelegramInitData(
       if (!isProd) {
         // Test mode fallback ONLY for development and local testing
         if (initDataRaw === 'test_chief') {
-          return { valid: true, user: { id: 1001, first_name: 'Шеф', username: 'chief' } };
+          return { valid: true, user: { id: 1001, first_name: 'Шеф', username: 'boss' } };
         }
         if (initDataRaw === 'test_assistant_1') {
           return { valid: true, user: { id: 1002, first_name: 'Анна', username: 'anna_asst' } };
@@ -120,10 +120,11 @@ export function telegramAuthMiddleware(req: any, res: any, next: any) {
   req.telegramUser = result.user;
   if (result.user) {
     const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
+    const telegramId = String(result.user.id);
     req.user = {
-      userId: 'usr-' + result.user.id,
-      telegramId: String(result.user.id),
-      role: String(result.user.id) === String(chiefTgId) ? 'chief' : 'assistant',
+      userId: 'usr-' + telegramId,
+      telegramId,
+      role: telegramId === chiefTgId ? 'boss' : 'pending',
       displayName: result.user.first_name || 'Пользователь'
     };
   }

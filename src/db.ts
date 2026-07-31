@@ -92,10 +92,9 @@ const defaultOpenRouterConfig: OpenRouterConfig = {
 const defaultDbState: DatabaseState = {
 
   users: [
-    { id: 'usr-1001', telegram_id: '1001', role: 'chief', created_at: new Date(Date.now() - 86400000).toISOString(), first_name: 'Шеф' },
+    { id: 'usr-1001', telegram_id: '1001', role: 'boss', created_at: new Date(Date.now() - 86400000).toISOString(), first_name: 'Шеф' },
     { id: 'usr-1002', telegram_id: '1002', role: 'assistant', created_at: new Date(Date.now() - 86400000).toISOString(), first_name: 'Анна' },
-    { id: 'usr-1003', telegram_id: '1003', role: 'assistant', created_at: new Date(Date.now() - 86400000).toISOString(), first_name: 'Игорь' },
-    { id: 'usr-admin', telegram_id: '1000', role: 'admin', created_at: new Date(Date.now() - 86400000).toISOString(), first_name: 'Администратор' }
+    { id: 'usr-1003', telegram_id: '1003', role: 'assistant', created_at: new Date(Date.now() - 86400000).toISOString(), first_name: 'Игорь' }
   ],
   assistantProfiles: [
     { id: 'prof-1002', user_id: 'usr-1002', display_name: 'Ассистент 1 (Анна)', mac_worker_id: '1002' },
@@ -182,7 +181,7 @@ const defaultDbState: DatabaseState = {
       task_id: 'task-101',
       sender_id: 'usr-1001',
       sender_name: 'Шеф',
-      sender_role: 'chief',
+      sender_role: 'boss',
       text: 'Оплата после согласования счета до конца дня',
       translation_th: 'ชำระเงินหลังจากอนุมัติใบแจ้งหนี้ภายในสิ้นวัน',
       created_at: new Date(Date.now() - 300000).toISOString()
@@ -205,6 +204,12 @@ export function loadDb(): DatabaseState {
       if (!memoryDb.transcriptions) memoryDb.transcriptions = [];
       if (!memoryDb.processedTexts) memoryDb.processedTexts = [];
       if (!memoryDb.translations) memoryDb.translations = [];
+      if (memoryDb.users) {
+        memoryDb.users.forEach(u => {
+          if ((u.role as string) === 'chief' || (u.role as string) === 'admin') u.role = 'boss';
+          if ((u.role as string) === 'assistant_1' || (u.role as string) === 'assistant_2') u.role = 'assistant';
+        });
+      }
       if (!memoryDb.openrouterConfig) {
         memoryDb.openrouterConfig = defaultOpenRouterConfig;
       } else {
