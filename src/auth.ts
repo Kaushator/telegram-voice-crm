@@ -17,20 +17,24 @@ export function validateTelegramInitData(
 ): { valid: boolean; user?: any; reason?: string } {
   if (!initDataRaw) return { valid: false, reason: 'Empty initData' };
 
+  const isProd = process.env.NODE_ENV === 'production';
+
   try {
     const urlParams = new URLSearchParams(initDataRaw);
     const hash = urlParams.get('hash');
 
     if (!hash) {
-      // Test mode fallback for development and local testing
-      if (initDataRaw === 'test_chief') {
-        return { valid: true, user: { id: 1001, first_name: 'Шеф', username: 'chief' } };
-      }
-      if (initDataRaw === 'test_assistant_1') {
-        return { valid: true, user: { id: 1002, first_name: 'Анна', username: 'anna_asst' } };
-      }
-      if (initDataRaw === 'test_assistant_2') {
-        return { valid: true, user: { id: 1003, first_name: 'Игорь', username: 'igor_asst' } };
+      if (!isProd) {
+        // Test mode fallback ONLY for development and local testing
+        if (initDataRaw === 'test_chief') {
+          return { valid: true, user: { id: 1001, first_name: 'Шеф', username: 'chief' } };
+        }
+        if (initDataRaw === 'test_assistant_1') {
+          return { valid: true, user: { id: 1002, first_name: 'Анна', username: 'anna_asst' } };
+        }
+        if (initDataRaw === 'test_assistant_2') {
+          return { valid: true, user: { id: 1003, first_name: 'Игорь', username: 'igor_asst' } };
+        }
       }
       return { valid: false, reason: 'Missing hash parameter in initData' };
     }
@@ -60,8 +64,8 @@ export function validateTelegramInitData(
       return { valid: true, user };
     }
 
-    // Dev mode fallback when user parameter is present
-    if (initDataRaw.includes('user=')) {
+    // Dev mode fallback when user parameter is present (ONLY in development)
+    if (!isProd && initDataRaw.includes('user=')) {
       try {
         const userStr = urlParams.get('user');
         if (userStr) {

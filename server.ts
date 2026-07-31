@@ -6,6 +6,7 @@ import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
 import { getDb, saveDb, defaultMacWorkerSettings } from './src/db.js';
 import { validateTelegramInitData, generateJwtToken, verifyJwtToken, JwtPayload } from './src/auth.js';
+import { requireCloudflareAccess, maskSecret } from './src/cfAuth.js';
 import {
   DbUser,
   DbAssistantProfile,
@@ -700,19 +701,22 @@ const handleAuthMe = (req: Request, res: Response) => {
     (req.query?.initData as string);
 
   const chiefTgId = process.env.CHIEF_TELEGRAM_ID || '1001';
+  const reqId = Math.random().toString(36).substring(7);
 
   if (initData) {
+    console.log(`[AUTH_DIAGNOSTICS][${reqId}] InitData received, length: ${initData.length}`);
     const result = validateTelegramInitData(initData);
     if (result.valid && result.user) {
       const telegramId = String(result.user.id);
+      console.log(`[AUTH_DIAGNOSTICS][${reqId}] Signature validation SUCCESS. Telegram ID: ${telegramId}`);
       
       const db = getDb();
       let dbUser = db.users.find(u => u.telegram_id === telegramId);
       
       if (!dbUser) {
+        console.log(`[AUTH_DIAGNOSTICS][${reqId}] User not found in DB. Creating a pending user.`);
         let role = 'pending';
         if (telegramId === chiefTgId) role = 'chief';
-        if (telegramId === '1000') role = 'admin';
         dbUser = {
           id: 'usr-' + telegramId,
           telegram_id: telegramId,
@@ -724,15 +728,17 @@ const handleAuthMe = (req: Request, res: Response) => {
         db.users.push(dbUser);
         saveDb();
       } else {
-        // Update name if changed
+        console.log(`[AUTH_DIAGNOSTICS][${reqId}] User found in DB. DB Role: ${dbUser.role}`);
         if (result.user.first_name && dbUser.first_name !== result.user.first_name) {
           dbUser.first_name = result.user.first_name;
           saveDb();
         }
       }
 
-      // If user is pending or kicked, they shouldn't get a valid jwt for protected endpoints
-      // but we need to return their state to the client.
+      // Convert 'chief' to 'boss' for the client/API representation (P0.6)
+      const clientRole = dbUser.role === 'chief' ? 'boss' : dbUser.role;
+      console.log(`[AUTH_DIAGNOSTICS][${reqId}] Final resolved role: ${clientRole}`);
+
       const payload = {
         userId: dbUser.id,
         telegramId,
@@ -741,33 +747,65 @@ const handleAuthMe = (req: Request, res: Response) => {
       };
       
       const token = (dbUser.role !== 'kicked' && dbUser.role !== 'pending') ? generateJwtToken(payload) : '';
+      const assistantProfile = db.assistantProfiles.find(p => p.user_id === dbUser.id);
 
       return res.json({
         success: true,
         user: {
-          id: result.user.id,
+          id: dbUser.id,
           telegramId,
           first_name: dbUser.first_name,
-          username: dbUser.username
+          username: dbUser.username,
+          assistantProfile: assistantProfile ? {
+            id: assistantProfile.id,
+            displayName: assistantProfile.display_name
+          } : undefined
         },
-        role: dbUser.role,
+        role: clientRole,
         token
       });
     } else {
-        return res.status(401).json({ success: false, error: 'Invalid init data' });
+      console.log(`[AUTH_DIAGNOSTICS][${reqId}] Signature validation FAILED. Reason: ${result.reason}`);
+      return res.status(401).json({ success: false, error: 'Invalid init data' });
     }
   }
 
-  // Fallback for dev / browser preview
-  return res.json({
-    success: true,
-    user: { id: 1000, telegramId: '1000', first_name: 'Admin', username: 'admin' },
-    role: 'admin',
-    token: generateJwtToken({ userId: 'usr-admin', telegramId: '1000', role: 'admin', displayName: 'Admin' }),
-    isDevFallback: true
-  });
+  // Handle case where request has valid JWT token (e.g. from Web Admin)
+  const authHeader = req.headers['authorization'];
+  if (authHeader) {
+    const token = extractToken(req);
+    if (token) {
+      const decoded = verifyJwtToken(token);
+      if (decoded) {
+        console.log(`[AUTH_DIAGNOSTICS][${reqId}] Valid JWT session found. User: ${decoded.userId}, Role: ${decoded.role}`);
+        const db = getDb();
+        const dbUser = db.users.find(u => u.id === decoded.userId);
+        const assistantProfile = dbUser ? db.assistantProfiles.find(p => p.user_id === dbUser.id) : null;
+        return res.json({
+          success: true,
+          user: {
+            id: decoded.userId,
+            telegramId: decoded.telegramId,
+            first_name: decoded.displayName,
+            assistantProfile: assistantProfile ? {
+              id: assistantProfile.id,
+              displayName: assistantProfile.display_name
+            } : undefined
+          },
+          role: decoded.role,
+          token
+        });
+      }
+    }
+  }
+
+  console.log(`[AUTH_DIAGNOSTICS][${reqId}] No initData or JWT provided. Access denied.`);
+  return res.status(401).json({ success: false, error: 'Unauthorized: Missing telegram init data or session token' });
 };
 
+
+// Protect all Admin API routes with Cloudflare Access JWT verification and Host isolation
+app.use('/api/admin', requireCloudflareAccess);
 
 app.get('/api/admin/users', (req, res) => {
   const db = getDb();
@@ -912,13 +950,13 @@ function transitionTaskStatus(
 // OpenRouter AI Engine & System Status Admin API
 // ==========================================
 
-app.get('/api/system/status', (req, res) => {
+app.get('/api/system/status', requireCloudflareAccess, (req, res) => {
   const db = getDb();
   const botToken = process.env.TELEGRAM_BOT_TOKEN || '7890123456:AAFxXXXXXXXXXXXXXXXXXXXXXXXXX';
   const openrouterKey = db.openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY || '';
   
-  const botMasked = botToken ? botToken.substring(0, 6) + '...' + botToken.slice(-4) : 'Не настроен';
-  const orKeyMasked = openrouterKey ? openrouterKey.substring(0, 8) + '...' + openrouterKey.slice(-4) : 'Не настроен';
+  const botMasked = maskSecret(botToken);
+  const orKeyMasked = maskSecret(openrouterKey);
   
   return res.json({
     success: true,
@@ -944,7 +982,7 @@ app.get('/api/system/status', (req, res) => {
   });
 });
 
-app.get('/api/system/health-logs', (req, res) => {
+app.get('/api/system/health-logs', requireCloudflareAccess, (req, res) => {
   const db = getDb();
   const errorsCount = configHealthLogs.filter((l) => l.level === 'ERROR').length;
   const warningsCount = configHealthLogs.filter((l) => l.level === 'WARN').length;
@@ -986,9 +1024,13 @@ app.get('/api/worker/config', (req: Request, res: Response) => {
 
 app.get('/api/admin/openrouter-config', (req, res) => {
   const db = getDb();
+  const cfg = db.openrouterConfig ? { ...db.openrouterConfig } : null;
+  if (cfg && cfg.apiKey) {
+    cfg.apiKey = maskSecret(cfg.apiKey);
+  }
   return res.json({
     success: true,
-    config: db.openrouterConfig
+    config: cfg
   });
 });
 
@@ -999,9 +1041,15 @@ app.post('/api/admin/openrouter-config', (req, res) => {
   }
 
   const db = getDb();
+  let apiKey = config.apiKey;
+  if (apiKey && apiKey.includes('...')) {
+    apiKey = db.openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY || '';
+  }
+
   db.openrouterConfig = {
     ...db.openrouterConfig,
     ...config,
+    apiKey: apiKey || db.openrouterConfig?.apiKey || '',
     updatedAt: new Date().toISOString()
   };
   saveDb();
@@ -1012,9 +1060,14 @@ app.post('/api/admin/openrouter-config', (req, res) => {
     isEnabled: config.isEnabled
   }, 'OPENROUTER_CONFIG_UPDATE');
 
+  const returnCfg = { ...db.openrouterConfig };
+  if (returnCfg.apiKey) {
+    returnCfg.apiKey = maskSecret(returnCfg.apiKey);
+  }
+
   return res.json({
     success: true,
-    config: db.openrouterConfig
+    config: returnCfg
   });
 });
 
@@ -1955,7 +2008,7 @@ app.get('/api/admin/analytics', (req, res) => {
 });
 
 // Admin Settings Endpoint
-app.get('/api/settings', (req, res) => {
+app.get('/api/settings', requireCloudflareAccess, (req, res) => {
   const db = getDb();
   res.json({
     success: true,
@@ -1965,7 +2018,7 @@ app.get('/api/settings', (req, res) => {
 });
 
 // System First-Run Onboarding & Health Status Endpoints
-app.get('/api/system/onboarding-status', (req, res) => {
+app.get('/api/system/onboarding-status', requireCloudflareAccess, (req, res) => {
   const db = getDb();
   const hasTelegramToken = !!process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN.includes('AAFxXXXX');
   const hasOpenRouterKey = !!(db.openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY) && !(db.openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY || '').includes('preset-key');
@@ -1979,18 +2032,18 @@ app.get('/api/system/onboarding-status', (req, res) => {
     hasTelegramToken,
     hasOpenRouterKey,
     config: {
-      telegramToken: process.env.TELEGRAM_BOT_TOKEN || '',
-      openRouterApiKey: db.openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY || '',
+      telegramToken: maskSecret(process.env.TELEGRAM_BOT_TOKEN),
+      openRouterApiKey: maskSecret(db.openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY),
       stage1Model: db.openrouterConfig?.model1Editor || process.env.DEFAULT_STAGE1_MODEL || 'openai/gpt-5.6-sol',
       stage2Model: db.openrouterConfig?.model2Validator || process.env.DEFAULT_STAGE2_MODEL || 'openai/o3-mini',
-      workerInternalSecret: process.env.WORKER_INTERNAL_SECRET || 'secret-worker-token-2026',
+      workerInternalSecret: maskSecret(process.env.WORKER_INTERNAL_SECRET),
       activeWorkerCount: db.macWorkerSettings?.activeWorkerCount || 2,
       workers: db.macWorkerSettings?.workers || defaultMacWorkerSettings.workers
     }
   });
 });
 
-app.post('/api/system/onboarding-setup', (req, res) => {
+app.post('/api/system/onboarding-setup', requireCloudflareAccess, (req, res) => {
   const {
     telegramToken,
     openRouterApiKey,
@@ -2001,9 +2054,9 @@ app.post('/api/system/onboarding-setup', (req, res) => {
     workers
   } = req.body;
 
-  if (telegramToken) process.env.TELEGRAM_BOT_TOKEN = telegramToken;
-  if (openRouterApiKey) process.env.OPENROUTER_API_KEY = openRouterApiKey;
-  if (workerInternalSecret) process.env.WORKER_INTERNAL_SECRET = workerInternalSecret;
+  if (telegramToken && !telegramToken.includes('...')) process.env.TELEGRAM_BOT_TOKEN = telegramToken;
+  if (openRouterApiKey && !openRouterApiKey.includes('...')) process.env.OPENROUTER_API_KEY = openRouterApiKey;
+  if (workerInternalSecret && !workerInternalSecret.includes('...')) process.env.WORKER_INTERNAL_SECRET = workerInternalSecret;
 
   const db = getDb();
 
@@ -2407,17 +2460,17 @@ app.post('/api/tasks/:id/complete', (req: AuthRequest, res) => {
   res.json({ success: true, task, dbTask });
 });
 
-app.get('/api/containers', (req, res) => {
+app.get('/api/containers', requireCloudflareAccess, (req, res) => {
   const db = getDb();
   res.json({ containers: {}, workerDevices: db.workerDevices });
 });
 
-app.get('/api/logs', (req, res) => {
+app.get('/api/logs', requireCloudflareAccess, (req, res) => {
   const db = getDb();
   res.json({ logs: db.systemLogs, auditLogs: db.auditLogs, logFilePath });
 });
 
-app.get('/api/logs/download', (req, res) => {
+app.get('/api/logs/download', requireCloudflareAccess, (req, res) => {
   if (fs.existsSync(logFilePath)) {
     res.download(logFilePath, `crm_system_logs_${new Date().toISOString().slice(0, 10)}.txt`);
   } else {

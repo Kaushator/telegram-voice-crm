@@ -8,6 +8,7 @@ import { FileUploader } from './FileUploader';
 
 interface TelegramSimulatorProps {
   currentRole: UserRole;
+  currentUser?: any;
   tasks: Task[];
   taskMessages: Record<string, TaskMessage[]>;
   onSendVoiceMessage: (title: string, durationSec: number) => void;
@@ -21,6 +22,7 @@ interface TelegramSimulatorProps {
 
 export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   currentRole,
+  currentUser,
   tasks,
   taskMessages,
   onSendVoiceMessage,
@@ -78,8 +80,8 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   const [hasSeenKseniaEasterEgg, setHasSeenKseniaEasterEgg] = useState(false);
   const [adminAnalytics, setAdminAnalytics] = useState<any>(null);
 
-  const currentAssistantId = currentRole === 'assistant_1' ? 'usr-1002' : currentRole === 'assistant_2' ? 'usr-1003' : 'usr-1001';
-  const currentAssistantName = currentRole === 'assistant_1' ? 'Ассистент 1 (Анна)' : currentRole === 'assistant_2' ? 'Ассистент 2 (Игорь)' : 'Шеф';
+  const currentAssistantId = currentUser?.id || (currentRole === 'boss' ? 'usr-1001' : 'usr-1002');
+  const currentAssistantName = currentUser?.assistantProfile?.displayName || currentUser?.first_name || (currentRole === 'boss' ? 'Шеф' : 'Ассистент');
 
   // Fetch Admin Data
   const fetchAdminData = async () => {

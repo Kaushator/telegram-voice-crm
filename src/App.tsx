@@ -73,12 +73,39 @@ export default function App() {
     }
   };
 
+  const isAdminHost = () => {
+    if (typeof window === 'undefined') return false;
+    const hostname = window.location.hostname;
+    const adminHostname = (import.meta as any).env?.VITE_ADMIN_HOSTNAME || 'crm.happyhouse420.com';
+    const params = new URLSearchParams(window.location.search);
+    const hasAdminQuery = params.get('admin') === 'true' || window.location.hash === '#admin';
+    return hostname === adminHostname || hasAdminQuery;
+  };
+
+  const isDevMode = typeof window !== 'undefined' && (
+    new URLSearchParams(window.location.search).get('dev') === 'true' ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+  );
+
   const authenticate = async () => {
     try {
-      const tg = typeof window !== 'undefined' ? window?.Telegram?.WebApp : null;
+      if (isAdminHost()) {
+        console.log('Detected Admin Host environment');
+        setCurrentRole('admin');
+        setActiveTab('dashboard');
+        setCurrentUser({ id: 'usr-admin', telegram_id: '1000', first_name: 'Администратор' });
+        return;
+      }
+
+      const tg = typeof window !== 'undefined' ? (window as any)?.Telegram?.WebApp : null;
       const tgInitData = tg?.initData || '';
       
       if (tg && tgInitData) {
+        console.log('Telegram.WebApp present');
+        console.log('initData present');
+        console.log('initData length', tgInitData.length);
+
         const res = await fetch('/api/auth/me', {
           method: 'POST',
           headers: {
@@ -88,41 +115,43 @@ export default function App() {
           body: JSON.stringify({ initData: tgInitData }),
         });
 
+        console.log('/api/auth/me HTTP status', res.status);
+
         if (res.ok) {
           const data = await res.json();
           if (data && data.success && data.role) {
-            setCurrentUser(data.user || { name: data.name, telegram_id: data.telegram_id });
-            let mappedRole: UserRole = 'boss';
-            const rawRole = data.role;
-            if (rawRole === 'admin') {
-              mappedRole = 'admin';
-            } else if (rawRole === 'assistant') mappedRole = 'assistant_1';
-            else if (rawRole === 'chief') mappedRole = 'boss';
-            else if (rawRole === 'pending') mappedRole = 'pending';
-            else if (rawRole === 'kicked') mappedRole = 'kicked';
-            setCurrentRole(mappedRole);
-            if (mappedRole === 'admin') {
-              setActiveTab('dashboard');
-            } else {
-              setActiveTab('telegram');
-            }
+            console.log('returned role', data.role);
+            console.log('returned user id', data.user?.id);
+
+            setCurrentUser(data.user);
+            const rawRole = data.role; // 'boss' | 'assistant' | 'pending' | 'kicked'
+            setCurrentRole(rawRole);
+            setActiveTab('telegram');
           } else {
-            setCurrentRole('admin');
-            setActiveTab('dashboard');
+            setHasError(true);
+            setErrorMessage('Не удалось получить роль пользователя');
           }
         } else {
-          setCurrentRole('admin');
-          setActiveTab('dashboard');
+          setHasError(true);
+          setErrorMessage('Ошибка авторизации в Telegram Mini App');
         }
       } else {
-        // Not in telegram (browser / desktop mode) -> default to Admin Mode (dashboard)
-        setCurrentRole('admin');
-        setActiveTab('dashboard');
+        // Not in Telegram Mini App and not on Admin Host
+        if (isDevMode) {
+          // Allow dev simulator fallback
+          setCurrentRole('boss');
+          setActiveTab('telegram');
+          setCurrentUser({ id: 'usr-1001', telegram_id: '1001', first_name: 'Шеф (Dev)' });
+        } else {
+          setCurrentRole(null);
+          setHasError(true);
+          setErrorMessage('This application must be opened from Telegram');
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Splash auth check failed', err);
-      setCurrentRole('admin');
-      setActiveTab('dashboard');
+      setHasError(true);
+      setErrorMessage(err?.message || 'Ошибка авторизации');
     }
   };
 
@@ -131,14 +160,37 @@ export default function App() {
 
     const initializeApp = async () => {
       try {
-        const tg = typeof window !== 'undefined' ? window?.Telegram?.WebApp : null;
-        if (tg) {
-          if (typeof tg.ready === 'function') tg.ready();
-          if (typeof tg.expand === 'function') tg.expand();
-        } else {
-          initTelegramWebApp();
-        }
+        const checkTgInitData = () => {
+          return new Promise<boolean>((resolve) => {
+            const tg = typeof window !== 'undefined' ? (window as any)?.Telegram?.WebApp : null;
+            if (!tg) {
+              resolve(false);
+              return;
+            }
+            if (typeof tg.ready === 'function') tg.ready();
+            if (typeof tg.expand === 'function') tg.expand();
 
+            if (tg.initData) {
+              resolve(true);
+              return;
+            }
+
+            // Retry up to 2 seconds (20 attempts of 100ms)
+            let attempts = 0;
+            const interval = setInterval(() => {
+              attempts++;
+              if (tg.initData) {
+                clearInterval(interval);
+                resolve(true);
+              } else if (attempts >= 20) {
+                clearInterval(interval);
+                resolve(false);
+              }
+            }, 100);
+          });
+        };
+
+        await checkTgInitData();
         await authenticate();
         if (isSubscribed) {
           await checkOnboarding();
@@ -450,13 +502,34 @@ export default function App() {
         backgroundImage: `linear-gradient(to bottom, rgba(15, 23, 42, 0.82), rgba(15, 23, 42, 0.92)), url('/eden_bg.jpg')`
       }}
     >
-      {(!inTelegram || currentRole === 'admin') && (
+      {isDevMode && (
         <RoleSelector
           currentRole={currentRole}
           onSelectRole={(r) => {
             setCurrentRole(r);
-            if (r === 'admin') setActiveTab('dashboard');
-            else setActiveTab('telegram');
+            if (r === 'admin') {
+              setActiveTab('dashboard');
+              setCurrentUser({ id: 'usr-admin', telegram_id: '1000', first_name: 'Администратор' });
+            } else {
+              setActiveTab('telegram');
+              if (r === 'boss') {
+                setCurrentUser({ id: 'usr-1001', telegram_id: '1001', first_name: 'Шеф' });
+              } else if (r === 'assistant_1') {
+                setCurrentUser({
+                  id: 'usr-1002',
+                  telegram_id: '1002',
+                  first_name: 'Анна',
+                  assistantProfile: { id: 'prof-1002', displayName: 'Ассистент 1 (Анна)' }
+                });
+              } else if (r === 'assistant_2') {
+                setCurrentUser({
+                  id: 'usr-1003',
+                  telegram_id: '1003',
+                  first_name: 'Игорь',
+                  assistantProfile: { id: 'prof-1003', displayName: 'Ассистент 2 (Игорь)' }
+                });
+              }
+            }
           }}
           activeTab={activeTab}
           onSelectTab={setActiveTab}
@@ -467,6 +540,7 @@ export default function App() {
         {activeTab === 'telegram' && (
           <TelegramSimulator
             currentRole={currentRole}
+            currentUser={currentUser}
             tasks={tasks}
             taskMessages={taskMessages}
             onSendVoiceMessage={handleSendVoiceMessage}
@@ -478,7 +552,7 @@ export default function App() {
               fetchTasks();
               fetchLogs();
             }}
-            onSwitchToAdmin={() => setActiveTab('dashboard')}
+            onSwitchToAdmin={isDevMode ? () => setActiveTab('dashboard') : undefined}
           />
         )}
 
@@ -487,7 +561,7 @@ export default function App() {
             logs={logs}
             onRefreshLogs={fetchLogs}
             onDownloadLogs={handleDownloadLogs}
-            onSwitchToCrm={() => setActiveTab('telegram')}
+            onSwitchToCrm={isDevMode ? () => setActiveTab('telegram') : undefined}
             currentUser={currentUser}
             onRoleChanged={(r) => {
               setCurrentRole(r);
